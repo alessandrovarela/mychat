@@ -1,0 +1,63 @@
+/* Elevation.
+ *
+ * Three levels, and the interface earns each: a resting card has a hairline
+ * border and almost no shadow, a menu floats, a modal blocks. In dark the
+ * shadows deepen instead of lightening, because a glow reads as a highlight.
+ *
+ * This sheet answered ONLY to `prefers-color-scheme` until REQ-326, and
+ * `colors.css` has answered to `data-theme` as well since the specimens needed
+ * a forced theme. While nothing could force one, the mismatch was unreachable.
+ * The moment an operator can pick a theme it is one click away, and it is the
+ * combination nobody designed: light surfaces carrying the shadows that were
+ * drawn for dark ones, black at 40% and 66% under a white card. So the forced
+ * scopes below mirror the ones in `colors.css`, block for block, and
+ * `tokens.test.ts` holds them in step with the media query above them.
+ */
+:root {
+  --shadow-none: none;
+  --shadow-1: 0 1px 2px rgba(16, 20, 28, 0.06);
+  --shadow-2:
+    0 4px 12px rgba(16, 20, 28, 0.08), 0 1px 2px rgba(16, 20, 28, 0.05);
+  --shadow-3:
+    0 16px 48px rgba(16, 20, 28, 0.18), 0 2px 6px rgba(16, 20, 28, 0.08);
+  --shadow-inset-field: inset 0 1px 1px rgba(16, 20, 28, 0.04);
+  --ring-focus: 0 0 0 3px
+    color-mix(in oklab, var(--rule-focus) 38%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 4px 14px rgba(0, 0, 0, 0.5);
+    --shadow-3: 0 18px 52px rgba(0, 0, 0, 0.66), 0 2px 6px rgba(0, 0, 0, 0.5);
+    --shadow-inset-field: inset 0 1px 1px rgba(0, 0, 0, 0.3);
+  }
+}
+
+/* Forced scopes, so elevation follows the theme the operator chose and not the
+ * one their operating system is set to (REQ-326). */
+[data-theme="light"] {
+  --shadow-1: 0 1px 2px rgba(16, 20, 28, 0.06);
+  --shadow-2:
+    0 4px 12px rgba(16, 20, 28, 0.08), 0 1px 2px rgba(16, 20, 28, 0.05);
+  --shadow-3:
+    0 16px 48px rgba(16, 20, 28, 0.18), 0 2px 6px rgba(16, 20, 28, 0.08);
+  --shadow-inset-field: inset 0 1px 1px rgba(16, 20, 28, 0.04);
+}
+
+[data-theme="dark"] {
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 14px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 18px 52px rgba(0, 0, 0, 0.66), 0 2px 6px rgba(0, 0, 0, 0.5);
+  --shadow-inset-field: inset 0 1px 1px rgba(0, 0, 0, 0.3);
+}
+
+/* The focus ring is DERIVED, from a colour that changes with the theme, so it
+ * carries the same hazard the semantic aliases of `colors.css` do: declared at
+ * `:root`, it resolves there, and a forced scope on a region would ring a
+ * control in the colour of the theme the region is not in. Restated here for
+ * the same reason and held by the same guardian. */
+[data-theme] {
+  --ring-focus: 0 0 0 3px
+    color-mix(in oklab, var(--rule-focus) 38%, transparent);
+}

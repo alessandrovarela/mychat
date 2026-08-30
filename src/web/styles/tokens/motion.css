@@ -1,0 +1,24 @@
+/* Motion: short, flat, and never load-bearing.
+ *
+ * This is a daily work tool, so transitions exist to soften a state change,
+ * not to announce it: colour and border move, geometry mostly does not. The one
+ * looping animation in the system is the pending spinner.
+ */
+:root {
+  --dur-fast: 120ms; /* @kind other */
+  --dur-slow: 260ms; /* @kind other */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.3, 1); /* @kind other */
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1); /* @kind other */
+  --transition-control:
+    color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms; /* @kind other */
+    --dur-slow: 0ms; /* @kind other */
+  }
+}

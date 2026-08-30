@@ -1,0 +1,36 @@
+{
+  // The SPA's own program, and the ONLY one in the repository that sees the
+  // DOM. Adding "DOM" to the root `lib` would have been one line, and it would
+  // have let `document`, `window` and `localStorage` compile inside
+  // `src/storage` or `src/http`: code that typechecks and then throws on the
+  // first request, because there is no document in a Node process. The split
+  // is what keeps that failure impossible instead of merely discouraged.
+  //
+  // `vite build` runs this program (see the typecheck plugin in
+  // `vite.config.ts`) before bundling, so `npm run build` still covers both
+  // halves of the codebase with the right globals in each.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    // Bundler, not NodeNext: this code is resolved by Vite and never by Node,
+    // and Vite is what maps a "./App.js" specifier onto App.tsx. The explicit
+    // extension is kept anyway, so the convention reads the same on both sides
+    // of the boundary.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    // Vite's own types and nothing else. Still no "node": browser code that
+    // reaches for `process` or `Buffer` must fail here, and `vite/client`
+    // brings none of that. What it does bring is `import.meta.glob`, which is
+    // how `locale.tsx` discovers the locale catalogues without a hand-written
+    // list of imports (REQ-073: adding a language is adding a file).
+    "types": ["vite/client"],
+    // The catalogues are JSON and are imported as data.
+    "resolveJsonModule": true
+  },
+  // Both keys are restated because `extends` would otherwise inherit the root's
+  // include (which points at `src/**/*.ts`) and, worse, its exclude of
+  // `src/web`, which would leave this program with no files at all.
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": []
+}

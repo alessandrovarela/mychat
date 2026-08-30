@@ -1,0 +1,1 @@
+ALTER TABLE `publication_cache` ADD `caption` text;

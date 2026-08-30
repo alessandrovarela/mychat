@@ -1,0 +1,1 @@
+ALTER TABLE `automation_aggregates` ADD `pending_publication_baseline` text;

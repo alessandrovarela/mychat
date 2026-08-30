@@ -1,0 +1,18 @@
+/* Typefaces: MyChat ships no webfont, on purpose.
+ *
+ * The product is a self-hosted image with five production dependencies and a
+ * standing rule against new ones (docs/handoff-design.md, restriction 4.1):
+ * "Fontes: pilha do sistema." So there is no @font-face rule in this design
+ * system, and none should be added. The two stacks below ARE the type of the
+ * brand: the operator's own OS face for the interface, the operator's own
+ * monospace for JSON, identifiers and numbers.
+ */
+:root {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --font-ui: var(--font-sans);
+  --font-code: var(--font-mono);
+}

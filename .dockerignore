@@ -1,0 +1,15 @@
+node_modules
+dist
+build
+coverage
+dev-data
+.env
+.env.*
+!.env.example
+.git
+.github
+.helmit
+docs
+mychat-design-system
+*.log
+.DS_Store

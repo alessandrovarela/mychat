@@ -1,0 +1,31 @@
+/* Type scale.
+ *
+ * 16px/1.65 body and the 1.9rem / 1.15rem heading pair are taken from the
+ * privacy page verbatim. Line height stays generous everywhere because the
+ * interface copy is whole sentences in two languages, and the Portuguese one
+ * runs 15-25% longer than the English (handoff, restriction 4.3).
+ */
+:root {
+  --text-xs: 0.8125rem; /* 13px: identifiers, cache dates, table meta */
+  --text-sm: 0.875rem; /* 14px: labels, buttons, badges, hints */
+  --text-base: 1rem; /* 16px: body, fields, notice sentences */
+  --text-md: 1.15rem; /* 18.4px: section heading, h2 */
+  --text-lg: 1.35rem; /* 21.6px: panel heading */
+  --text-xl: 1.9rem; /* 30.4px: screen title, h1 */
+  --text-metric: 2.25rem; /* 36px: dashboard figures */
+
+  --leading-tight: 1.2; /* headings only */
+  --leading-snug: 1.4; /* badges, table cells, single-line labels */
+  --leading-normal: 1.65; /* every paragraph */
+  --leading-code: 1.55; /* JSON editor */
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-brand: 650; /* the wordmark alone (`.mc-brand`), the prototype's */
+
+  --tracking-title: -0.02em;
+  --tracking-heading: -0.01em;
+  --tracking-normal: 0;
+  --tracking-caps: 0.06em; /* uppercase: table column heads, preview line labels */
+}

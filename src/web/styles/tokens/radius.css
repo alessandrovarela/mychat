@@ -1,0 +1,15 @@
+/* Corner radii. Small and consistent: 6px is the house radius, from the
+ * privacy page's .note (0 6px 6px 0) and its code chips (4px). Nothing here is
+ * pill-shaped except the state markers, which need to read as markers. */
+:root {
+  --radius-sm: 4px; /* code chips, keyword chips, inline markers */
+  --radius-md: 6px; /* buttons, fields, cards, notices */
+  --radius-lg: 10px; /* modals, dialogs, the app shell */
+  --radius-pill: 999px;
+  --radius-thumb: 4px; /* publication thumbnails */
+  /* The handset the preview draws the conversation on, and the one corner in
+   * the product that is not a card's. A device is recognised by its shape
+   * before a single word is read, and no step of the ladder above is round
+   * enough to be one: `--radius-lg` on a 20rem frame reads as a panel. */
+  --radius-device: 28px;
+}

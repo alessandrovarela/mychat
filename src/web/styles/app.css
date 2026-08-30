@@ -1,0 +1,25 @@
+/* The interface's one stylesheet, and the only CSS entry point there is.
+ *
+ * `main.tsx` imports this file, once, and nothing else in `src/web` imports
+ * CSS. That is not a preference: `@import` order decides which declaration of
+ * equal specificity wins, and a screen that pulled its own sheet in would get
+ * an order that depends on when its module happened to be evaluated. With one
+ * entry the cascade is written here, in the order below, and reads the same in
+ * the development server and in the bundle `vite build` writes.
+ *
+ * Order matters for `base.css` alone: it styles real elements (body, headings,
+ * links, focus), so it comes after the files that only declare variables.
+ *
+ * The component rules come last, after `base.css`, which is what lets a
+ * component refine a document rule (`.mc-input:focus` moves the ring's offset)
+ * without either of them raising its specificity to win.
+ */
+@import url("./tokens/fonts.css");
+@import url("./tokens/colors.css");
+@import url("./tokens/typography.css");
+@import url("./tokens/spacing.css");
+@import url("./tokens/radius.css");
+@import url("./tokens/shadow.css");
+@import url("./tokens/motion.css");
+@import url("./tokens/base.css");
+@import url("../components/components.css");

@@ -1,0 +1,47 @@
+/* Spacing: a 4px grid, named by step, never by pixel.
+ *
+ * Density is a feature here: the operator wants the state of everything at a
+ * glance, not a wizard (handoff, section 2). So the ladder is fine-grained at
+ * the bottom, and layout gaps stop at 40px.
+ */
+:root {
+  --space-0: 0;
+  --space-1: 0.25rem; /* 4px */
+  --space-2: 0.5rem; /* 8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
+  --space-10: 2.5rem; /* 40px */
+  --space-16: 4rem; /* 64px */
+
+  /* Semantic spacing. A step gets a second, semantic name only where a rule
+   * asks for it by that name: the ladder is the vocabulary, and an alias
+   * nobody reads is a step of a scale that does not exist (REQ-191). */
+  --gap-inline: var(--space-2); /* icon to label, chip to chip */
+  --gap-block: var(--space-6); /* block to block inside a screen */
+  --pad-card: var(--space-4);
+  --pad-panel: var(--space-6);
+  --pad-field-y: 0.5rem;
+  --pad-field-x: 0.6875rem; /* 11px: field text lines up with label */
+  --pad-button-y: 0.5rem;
+  --pad-button-x: 0.875rem;
+
+  --measure-prose: 42rem; /* the privacy page's max-width, kept */
+  --measure-form: 34rem;
+  --width-sidebar: 15rem;
+  --width-app: 78rem;
+  /* The one size a control gets, anywhere in the application (REQ-268).
+   *
+   * 44px is the floor WCAG 2.5.5 sets for a pointer target, and it is a floor
+   * about FINGERS, so it cannot depend on which screen the control landed on:
+   * a button that is comfortable in the editor and 28px tall in a tile is a
+   * button that fails on the tile. There is no second step. A "small" variant
+   * is not a size, it is an exemption, and an exemption is what every dense
+   * row asks for.
+   *
+   * In rem and not in px so that a person who enlarged the browser's text gets
+   * a target that grows with it; 2.75rem is 44px at the default root size. */
+  --tap: 2.75rem;
+}

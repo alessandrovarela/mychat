@@ -1,0 +1,326 @@
+/* Colour: two complete palettes, light and dark, and one that is neither.
+ *
+ * The third is at the foot of `:root` and belongs to nobody here: the direct
+ * the preview quotes keeps its own colour under both themes (REQ-298). Every
+ * paragraph below is about the product's two.
+ *
+ * The palette STARTED at site/privacidade/index.html, the only styled artefact
+ * the repository had: #0b5fff / #7aa2ff accent, #1a1a1a / #e8e8e8 ink,
+ * #f6f7f9 / #1c1f25 sunken. The semantic families (success, warning, danger)
+ * were derived in oklch from that accent, because the product needed four
+ * notice natures and three ceiling levels that the original file never had.
+ * The dark half no longer comes from there, and the note on REQ-299 at the
+ * bottom of this comment says where it comes from instead.
+ *
+ * Rule from the handoff, restriction 4.2: colour is NEVER the only carrier of
+ * information. Every token here is expected to arrive with a word beside it.
+ *
+ * One value was CHANGED while porting the design system into the application,
+ * and `tokens.test.ts` is why: `--fg-3` carries real text (identifiers, cache
+ * dates, table meta, field placeholders), and the design system's #8a8f96 and
+ * #7c828c reached only 3.26:1 and 4.27:1 against the surfaces they sit on,
+ * under the 4.5:1 REQ-111 requires. Both were moved along their own grey until
+ * they clear it, keeping the cool cast they had.
+ *
+ * It was moved a SECOND time, and the reason the first move was not enough is
+ * worth keeping (REQ-195). That correction cleared every RESTING surface, which
+ * is where a token is easy to think about, and the interaction surfaces were
+ * never measured: `--fg-3` on `--bg-hover` was 4.43:1 in the dark theme, and on
+ * `--bg-active` 3.92:1 there and 4.24:1 in the LIGHT one. A card that carries
+ * meta text in this token and takes `--bg-hover` under the cursor therefore put
+ * weak text under the floor for as long as the pointer rested on it.
+ *
+ * The move was made in the INK and not in the two surfaces, and that is
+ * forced rather than chosen: hover darkens in the light theme and lightens in
+ * the dark one (the interaction language at the top of `components.css`), so
+ * buying contrast from the surfaces means moving each of them the opposite way
+ * and inverting the language on both. The cost of moving the ink instead is
+ * paid in hierarchy: `--fg-2` against `--fg-3` goes from 1.34:1 to 1.15:1 in
+ * the dark theme, and the two are never told apart by contrast alone anyway
+ * (restriction 4.2 above: colour is never the only carrier).
+ *
+ * The DARK half was then replaced wholesale, and its authority is no longer
+ * this file: REQ-299 adopts `docs/prototipo-automacao.html`, the palette the
+ * user approved by looking at it. Thirteen tokens had drifted from it and the
+ * accent led them, #7aa2ff here against #5b93ff there, pale enough on a dark
+ * surface to read as washed out. The other twelve are `--rule-strong` and the
+ * rest of the accent, success, warning and danger families. The LIGHT half was
+ * compared token by token in the same pass and diverged in nothing, so it is
+ * untouched. `tokens.test.ts` now holds the two files against each other,
+ * which is what stops the drift from happening a second time.
+ *
+ * Adopting that accent did NOT bring an ink with it, and the arithmetic is the
+ * reason: white on #5b93ff is 2.97:1, far under the floor, while the #0d1017
+ * both files already spell reaches 6.40:1. `--fg-on-accent` stays dark here.
+ *
+ * `--rule-focus` followed the accent although the prototype never redeclares
+ * it in the dark theme, so its own dark ring falls back to the light #0b5fff,
+ * which is a defect there and not a value to copy. In the LIGHT theme both
+ * files spell this token exactly as `--accent`, and the value it carried here
+ * was literally the old dark accent: leaving it would keep the last trace of a
+ * colour the palette no longer has, and `shadow.css` builds the focus glow out
+ * of it with `color-mix`. At #5b93ff it measures 4.46:1 against `--bg-active`,
+ * the tightest surface a ring lands on, over the 3:1 that WCAG 1.4.11 asks of
+ * the boundary of a control.
+ *
+ * Four tokens the prototype does not define KEPT their values, because adopting
+ * a palette is aligning what both sides declare and not amputating what one
+ * side has alone: `--accent-active`, `--danger-hover`, `--danger-active` and
+ * `--danger-ink`. Each still clears its floor. What that costs is written down
+ * rather than hidden: their base moved and they did not follow, so in OKLab
+ * lightness the dark accent ladder now steps 0.059 and then 0.103, and the dark
+ * danger ladder 0.117 and then 0.052, where every other ladder in this sheet
+ * steps about 0.06 twice. Evening them out means new pigment for a pressed
+ * button, and in this project a screen goes to the prototype for the user's eye
+ * before it goes into the application.
+ */
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces */
+  --bg-page: #ffffff;
+  --bg-sunken: #f6f7f9;
+  --bg-raised: #ffffff;
+  --bg-hover: #f1f3f5;
+  --bg-active: #e8ebee;
+  --bg-overlay: rgba(20, 22, 26, 0.44);
+
+  /* Ink */
+  --fg-1: #1a1a1a;
+  --fg-2: #5a5a5a;
+  --fg-3: #656a70; /* corrected for contrast, see the note at the top */
+  --fg-on-accent: #ffffff;
+
+  /* Lines */
+  --rule: #e4e4e4;
+  --rule-strong: #cfd2d6;
+  --rule-focus: #0b5fff;
+
+  /* Accent */
+  --accent: #0b5fff;
+  --accent-hover: #0a4fd6;
+  --accent-active: #0942b3;
+  --accent-soft: #eef3ff;
+  --accent-ink: #0a44c4;
+
+  /* Semantics */
+  --success: #0e7a4a;
+  --success-soft: #e7f6ee;
+  --success-ink: #0b5f3a;
+  --warning: #9a6100;
+  --warning-soft: #fff4e0;
+  --warning-ink: #7a4d00;
+  --danger: #c02525;
+  --danger-hover: #a11d1d;
+  --danger-active: #851717;
+  --danger-soft: #fdecec;
+  --danger-ink: #8e1c1c;
+  /* Information has no palette of its own: it IS the accent, and only the tint
+   * a notice sits on ever needed a name. The full-strength and ink members of
+   * the family were declared beside this one and read by nothing (REQ-191). */
+  --info-soft: var(--accent-soft);
+
+  /* The conversation the preview QUOTES, and the one family in this sheet that
+   * is not the product's (REQ-298).
+   *
+   * The handset beside the form draws Instagram's direct, and Instagram's
+   * direct does not change palette when the operator changes the theme of our
+   * panel. So the drawing is a citation of another product, not a surface of
+   * ours, and every value below is declared ONCE: no redefinition in the dark
+   * media query, none in the forced scopes. That is the whole of "fixed", and
+   * `tokens.test.ts` holds it, because a value quietly restated under a theme
+   * would put our palette back inside the quotation.
+   *
+   * The values are `docs/prototipo-automacao.html`, the page the user approved
+   * by looking at it: the bezel and screen of `.phone` and `.phone-in`, the two
+   * bubbles, the card the delivery arrives in and the blue its buttons are
+   * written in. What they are NOT is a way out of the measurement: fixed colour
+   * that leaves the token system leaves the contrast guardian with it, so the
+   * pairs these make are in `CONTRAST_PAIRS` beside every other pair the
+   * product paints, and they answer to the same 4.5:1.
+   *
+   * One value of the prototype is deliberately not here, and it is the one that
+   * failed that floor: the step label was drawn there in a second, dimmer grey
+   * (#6f757e), which measures 4.19:1 on the screen below. The label therefore
+   * takes `--direct-meta`, the grey the prototype already writes the sender's
+   * name in, at 6.28:1. A tier of hierarchy is lost and the label is still
+   * separated by size, case and tracking; the alternative was either an invented
+   * grey or text under the floor inside a picture nobody would think to measure.
+   * The prototype has since been corrected to that same grey (REQ-297's task,
+   * 3n.7), so the two files no longer disagree about it: what is recorded here
+   * is why the application moved first, and it is the measurement.
+   */
+  --direct-bezel: #14161a; /* .phone, the body around the screen */
+  --direct-screen: #0b0d10; /* .phone-in, the thread's own ground */
+  --direct-ink: #f2f2f2; /* .phone-in, what a message is written in */
+  --direct-meta: #8d939b; /* .who, the name over a bubble */
+  --direct-bubble: #22262d; /* .bubble-them, the contact's message */
+  --direct-mine: #2a5bd7; /* .bubble-you, the account's message */
+  --direct-mine-ink: #ffffff; /* .bubble-you, white on that blue */
+  --direct-card: #1a1d22; /* .pcard, the delivery as it lands */
+  --direct-rule: #2b2f36; /* .pcard, the line around and inside it */
+  --direct-card-meta: #9aa1aa; /* .pcard-body span, the card's second tier */
+  --direct-link: #6ea0ff; /* .pcard-btn, the button the contact presses */
+  --direct-media: #23272e; /* .pcard-img, where a picture has not loaded */
+
+  /* Semantic aliases: what the components actually reference */
+  --text-title: var(--fg-1);
+  --text-body: var(--fg-1);
+  --text-muted: var(--fg-2);
+  --text-link: var(--accent);
+  --text-link-hover: var(--accent-hover);
+  --surface-app: var(--bg-sunken);
+  --surface-card: var(--bg-raised);
+  --surface-field: var(--bg-page);
+  --border-card: var(--rule);
+  --border-field: var(--rule-strong);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-page: #14161a;
+    --bg-sunken: #1c1f25;
+    --bg-raised: #1a1d22;
+    --bg-hover: #23272e;
+    --bg-active: #2b3038;
+    --bg-overlay: rgba(6, 7, 9, 0.62);
+
+    --fg-1: #e8e8e8;
+    --fg-2: #a3a3a3;
+    --fg-3: #9398a1; /* corrected for contrast, see the note at the top */
+    --fg-on-accent: #0d1017;
+
+    --rule: #2b2f36;
+    --rule-strong: #3a4048;
+    --rule-focus: #5b93ff;
+
+    --accent: #5b93ff;
+    --accent-hover: #7aa8ff;
+    --accent-active: #b3c9ff;
+    --accent-soft: #16233d;
+    --accent-ink: #a8c4ff;
+
+    --success: #4ec38a;
+    --success-soft: #12291f;
+    --success-ink: #8fe0b6;
+    --warning: #e0a34a;
+    --warning-soft: #2c2113;
+    --warning-ink: #f0c98a;
+    --danger: #ef6b6b;
+    --danger-hover: #ffa39b;
+    --danger-active: #ffbdb7;
+    --danger-soft: #2e1618;
+    --danger-ink: #ffb1aa;
+  }
+}
+
+/* Forced scopes, so a specimen or a screen can show one theme on purpose. */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #ffffff;
+  --bg-sunken: #f6f7f9;
+  --bg-raised: #ffffff;
+  --bg-hover: #f1f3f5;
+  --bg-active: #e8ebee;
+  --bg-overlay: rgba(20, 22, 26, 0.44);
+  --fg-1: #1a1a1a;
+  --fg-2: #5a5a5a;
+  --fg-3: #656a70; /* corrected for contrast, see the note at the top */
+  --fg-on-accent: #ffffff;
+  --rule: #e4e4e4;
+  --rule-strong: #cfd2d6;
+  --rule-focus: #0b5fff;
+  --accent: #0b5fff;
+  --accent-hover: #0a4fd6;
+  --accent-active: #0942b3;
+  --accent-soft: #eef3ff;
+  --accent-ink: #0a44c4;
+  --success: #0e7a4a;
+  --success-soft: #e7f6ee;
+  --success-ink: #0b5f3a;
+  --warning: #9a6100;
+  --warning-soft: #fff4e0;
+  --warning-ink: #7a4d00;
+  --danger: #c02525;
+  --danger-hover: #a11d1d;
+  --danger-active: #851717;
+  --danger-soft: #fdecec;
+  --danger-ink: #8e1c1c;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg-page: #14161a;
+  --bg-sunken: #1c1f25;
+  --bg-raised: #1a1d22;
+  --bg-hover: #23272e;
+  --bg-active: #2b3038;
+  --bg-overlay: rgba(6, 7, 9, 0.62);
+  --fg-1: #e8e8e8;
+  --fg-2: #a3a3a3;
+  --fg-3: #9398a1; /* corrected for contrast, see the note at the top */
+  --fg-on-accent: #0d1017;
+  --rule: #2b2f36;
+  --rule-strong: #3a4048;
+  --rule-focus: #5b93ff;
+  --accent: #5b93ff;
+  --accent-hover: #7aa8ff;
+  --accent-active: #b3c9ff;
+  --accent-soft: #16233d;
+  --accent-ink: #a8c4ff;
+  --success: #4ec38a;
+  --success-soft: #12291f;
+  --success-ink: #8fe0b6;
+  --warning: #e0a34a;
+  --warning-soft: #2c2113;
+  --warning-ink: #f0c98a;
+  --danger: #ef6b6b;
+  --danger-hover: #ffa39b;
+  --danger-active: #ffbdb7;
+  --danger-soft: #2e1618;
+  --danger-ink: #ffb1aa;
+}
+
+/* The derived tokens again, on ANY element that forces a theme.
+ *
+ * This block is duplication and it closes a hole that cost a measurement to
+ * find. A custom property whose value is another custom property is resolved on
+ * the element the DECLARATION sits on, not on the element that reads it. Every
+ * name below is declared at `:root` in terms of a primitive, and the two forced
+ * scopes above restate only the primitives, so a forced scope on anything other
+ * than the root element used to hand out half a theme: measured in Chrome, with
+ * the system in dark, `--bg-sunken` inside a forced light region came out
+ * #f6f7f9 while `--surface-app` stayed #1c1f25, because the alias had already
+ * resolved against the media query up at `:root`.
+ *
+ * The bare attribute selector matches whatever carries the mark, root or
+ * region, so the alias resolves against the primitives of the scope it is IN.
+ * On the root it is the same value twice and costs nothing.
+ *
+ * The alternative was to move the aliases out of `:root` into a `:root,
+ * [data-theme]` selector list, which would declare each of them once instead of
+ * twice. It is not taken because `tokens.test.ts` reads the light palette out
+ * of the first `:root` block, and a dozen guardians (every contrast pair, every
+ * painted surface) would have had to be taught a second reading place to keep
+ * measuring what they measure today. Duplication that a test holds in step is
+ * cheaper than surgery on the thing that does the holding, and the test that
+ * holds this one is `restates every derived token where a forced theme can
+ * reach it`: it fails the moment a name is added at `:root` and forgotten here.
+ *
+ * The fixed colours of the quoted conversation are NOT here, and never will be
+ * (REQ-298): they are literals, they answer to no theme, and the guardian above
+ * counts this block as a themed scope so that one cannot be smuggled in.
+ */
+[data-theme] {
+  --info-soft: var(--accent-soft);
+  --text-title: var(--fg-1);
+  --text-body: var(--fg-1);
+  --text-muted: var(--fg-2);
+  --text-link: var(--accent);
+  --text-link-hover: var(--accent-hover);
+  --surface-app: var(--bg-sunken);
+  --surface-card: var(--bg-raised);
+  --surface-field: var(--bg-page);
+  --border-card: var(--rule);
+  --border-field: var(--rule-strong);
+}

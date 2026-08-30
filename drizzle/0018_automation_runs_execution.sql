@@ -1,0 +1,1 @@
+ALTER TABLE `automation_runs` ADD `execution_id` text;

@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    // No DOM here, deliberately. The backend runs on a plain Node process, so
+    // `document` or `localStorage` in `src/http` or `src/storage` is a defect
+    // that only shows up at runtime; without lib.dom the compiler refuses it.
+    // The SPA gets the DOM from its OWN program, `src/web/tsconfig.json`, which
+    // is why `src/web` is excluded below instead of being compiled here.
+    "lib": ["ES2023"],
+    // NodeNext, not Bundler: the package is ESM ("type": "module") and runs on
+    // a plain Node process, with no bundler anywhere. Under Bundler the
+    // compiler accepted extensionless relative imports that Node refuses to
+    // resolve at runtime, so the failure only surfaced in production. NodeNext
+    // makes `npm run build` the guard (REQ-082).
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts", "*.config.ts"],
+  // The SPA is compiled by `src/web/tsconfig.json` (DOM and JSX enabled there,
+  // and nowhere else). `vite build` runs that program before bundling, so both
+  // halves are still typechecked by `npm run build`.
+  "exclude": ["src/web"]
+}

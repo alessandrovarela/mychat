@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      The product name, which is not interface copy and is not translated.
+      Every operator-visible text comes from the locale catalogue, so the
+      per-screen title and the `lang` attribute are set at runtime by the
+      language preference (REQ-102), not written here.
+    -->
+    <title>MyChat</title>
+    <!--
+      The operator's theme, applied BEFORE the first paint (REQ-326).
+
+      It is inline and it is here on purpose. `main.tsx` is a module, so it runs
+      only after the document has been parsed: a page that waited for it would
+      paint the system theme and then swap to the chosen one, once per load, in
+      front of whoever chose it. This runs while the parser is still in the
+      head, so the mark is on the root element before anything is painted.
+
+      The key and the attribute are `src/web/theme.ts`, spelled a second time
+      because a module cannot be imported from here without becoming a module.
+      `theme.test.ts` holds this script against that file, so the two cannot
+      drift apart, and refuses a script that would apply anything but the two
+      forced themes.
+
+      Reading storage can THROW rather than answer null, in a browser with site
+      data blocked. An uncaught throw here would leave the whole page unstyled
+      for a moment, so the failure is swallowed and the system theme stands.
+    -->
+    <script>
+      try {
+        var mcTheme = localStorage.getItem("mychat.theme");
+        if (mcTheme === "light" || mcTheme === "dark") {
+          document.documentElement.setAttribute("data-theme", mcTheme);
+        }
+      } catch (error) {
+        /* No store, no memory of a choice: the system theme stands. */
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/main.tsx"></script>
+  </body>
+</html>

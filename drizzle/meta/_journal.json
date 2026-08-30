@@ -1,0 +1,181 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1785599318798,
+      "tag": "0000_initial",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785605289034,
+      "tag": "0001_audit_entries",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1785606481600,
+      "tag": "0002_received_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1785606808509,
+      "tag": "0003_automation_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1785610450737,
+      "tag": "0004_durable_work",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1785611067146,
+      "tag": "0005_send_class",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1785611466601,
+      "tag": "0006_platform_credentials",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1785611726732,
+      "tag": "0007_contact_attributes",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1785612196762,
+      "tag": "0008_contact_conversations",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1785701209876,
+      "tag": "0009_phase3_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1785781557642,
+      "tag": "0010_forget_orphan_automation_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1785892148672,
+      "tag": "0011_audit_event_text_and_username",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1785988810216,
+      "tag": "0012_amusing_colleen_wing",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1786737600000,
+      "tag": "0013_automation_aggregates",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1786726568339,
+      "tag": "0014_petite_secret_warriors",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1786739400000,
+      "tag": "0015_drop_legacy_flows",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1786913220000,
+      "tag": "0016_publication_caption",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1787025812983,
+      "tag": "0017_lame_kid_colt",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1787048544093,
+      "tag": "0018_automation_runs_execution",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1787373866791,
+      "tag": "0019_smooth_callisto",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1787441462736,
+      "tag": "0020_pending_publication_baseline",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1787441462737,
+      "tag": "0021_pending_publication_baseline_relation",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1787455407000,
+      "tag": "0022_insights_attribution",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1787472000000,
+      "tag": "0023_insight_facts",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1787486400000,
+      "tag": "0024_message_lifecycle",
+      "breakpoints": true
+    }
+  ]
+}

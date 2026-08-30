@@ -1,0 +1,21 @@
+services:
+  app:
+    # A published image is intentional: installing this file never builds from
+    # the local checkout. Replace `latest` with a released version to pin it.
+    image: ghcr.io/alessandrovarela/mychat:latest
+    pull_policy: always
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_PATH: /var/lib/mychat/mychat.db
+      ASSETS_DIR: /var/lib/mychat/assets
+      THUMBNAILS_DIR: /var/lib/mychat/thumbs
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - mychat-data:/var/lib/mychat
+    restart: unless-stopped
+
+volumes:
+  mychat-data:

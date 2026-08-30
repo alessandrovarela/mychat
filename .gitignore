@@ -1,0 +1,28 @@
+node_modules/
+dist/
+coverage/
+
+# Local runtime data: SQLite file and disk-adapter assets (ADR-016)
+dev-data/
+
+# Secrets never reach the repository. Only .env.example is versioned.
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
+
+# helmit:local-state:start
+# HelmIt local machine state — machine-local, never shared, never versioned.
+# Everything ELSE under .helmit/ (SPEC.md, ROADMAP.md, REQUIREMENTS.md,
+# STATE.md, KEEL.md, config.json, phases/) IS the project contract and MUST
+# stay versioned — that contract is the reason HelmIt exists.
+.helmit/map/
+.helmit/*.jsonl
+.helmit/lock.json
+.helmit/yolo.json
+.helmit/HANDOFF.md
+.helmit/dashboard.html
+.helmit/quality-receipt.json
+# helmit:local-state:end
