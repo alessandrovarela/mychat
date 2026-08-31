@@ -39,6 +39,17 @@ import { defineConfig } from "vitest/config";
  * `test` block.
  */
 const TEST_TIMEOUT_MS = 30_000;
+const publicRelease = process.env.MYCHAT_PUBLIC_RELEASE === "1";
+const privateArtifactTests = publicRelease
+  ? [
+      "src/config/limits.test.ts",
+      "tests/distribution/meta-docs.test.ts",
+      "tests/platform-limits.test.ts",
+    ]
+  : [];
+const privateArtifactWebTests = publicRelease
+  ? ["src/web/components/components.test.tsx", "src/web/styles/tokens.test.ts"]
+  : [];
 
 export default defineConfig({
   test: {
@@ -51,7 +62,12 @@ export default defineConfig({
           include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
           // `src/web` is listed beside the defaults, not instead of them:
           // setting `exclude` replaces the built-in list wholesale.
-          exclude: ["**/node_modules/**", "**/dist/**", "src/web/**"],
+          exclude: [
+            "**/node_modules/**",
+            "**/dist/**",
+            "src/web/**",
+            ...privateArtifactTests,
+          ],
         },
       },
       {
@@ -70,6 +86,11 @@ export default defineConfig({
           // fail. Nothing else here imports CSS, so this costs one read of the
           // token sheet.
           css: true,
+          exclude: [
+            "**/node_modules/**",
+            "**/dist/**",
+            ...privateArtifactWebTests,
+          ],
         },
       },
     ],

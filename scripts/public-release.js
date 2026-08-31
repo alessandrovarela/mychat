@@ -11,6 +11,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, relative, resolve, sep } from "node:path";
@@ -149,6 +150,19 @@ function listFiles(root) {
   return files.sort();
 }
 
+function preparePublicPackage(root) {
+  const packagePath = resolve(root, "package.json");
+  const packageJson = JSON.parse(readFileSync(packagePath, "utf8"));
+
+  packageJson.private = false;
+  packageJson.scripts = {
+    ...packageJson.scripts,
+    test: "MYCHAT_PUBLIC_RELEASE=1 vitest run",
+  };
+
+  writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+}
+
 export function assertRemoteTopology(remotes, config) {
   if (config.sourceRemote !== "origin" || config.publicRemote !== "public") {
     throw new Error(
@@ -225,6 +239,7 @@ export function preparePublicRelease({
       }
     }
 
+    preparePublicPackage(staging);
     const files = verifyPublicTree(staging, config);
     renameSync(staging, output);
     return files;

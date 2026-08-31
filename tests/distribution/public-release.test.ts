@@ -41,6 +41,7 @@ describe("public release allowlist", () => {
     mkdirSync(resolve(source, "src"), { recursive: true });
     mkdirSync(resolve(source, ".helmit"), { recursive: true });
     writeFileSync(resolve(source, "package.json"), '{"name":"mychat"}\n');
+    writeFileSync(resolve(source, ".prettierignore"), "*.md\n");
     writeFileSync(
       resolve(source, ".env.example"),
       "META_APP_SECRET=\nWEBHOOK_VERIFY_TOKEN=\nMETA_TOKEN=replace-me\n",
@@ -57,7 +58,15 @@ describe("public release allowlist", () => {
 
     expect(
       preparePublicRelease({ config, outputDir: output, sourceDir: source }),
-    ).toEqual([".env.example", "package.json", "src/index.ts"]);
+    ).toEqual([
+      ".env.example",
+      ".prettierignore",
+      "package.json",
+      "src/index.ts",
+    ]);
+    expect(readFileSync(resolve(output, ".prettierignore"), "utf8")).toBe(
+      "*.md\n",
+    );
     expect(readFileSync(resolve(output, ".env.example"), "utf8")).toContain(
       "replace-me",
     );
@@ -67,6 +76,12 @@ describe("public release allowlist", () => {
     expect(readFileSync(resolve(output, "src/index.ts"), "utf8")).toContain(
       "version",
     );
+    expect(
+      JSON.parse(readFileSync(resolve(output, "package.json"), "utf8")),
+    ).toMatchObject({
+      private: false,
+      scripts: { test: "MYCHAT_PUBLIC_RELEASE=1 vitest run" },
+    });
     expect(() =>
       readFileSync(resolve(output, ".helmit/STATE.md"), "utf8"),
     ).toThrow();

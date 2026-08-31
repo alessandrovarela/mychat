@@ -5,12 +5,12 @@
   "license": "MIT",
   "author": "Alessandro Varela",
   "type": "module",
-  "private": true,
+  "private": false,
   "engines": {
     "node": ">=24"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "MYCHAT_PUBLIC_RELEASE=1 vitest run",
     "build": "tsc --noEmit && vite build",
     "db:generate": "drizzle-kit generate",
     "lint": "eslint . && prettier --check .",
