@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IN_MEMORY_DATABASE, openDatabase } from "../storage/database.js";
 import type { DatabaseHandle } from "../storage/database.js";
 import {
@@ -429,6 +429,7 @@ describe("the publication catalogue", () => {
         download: media.download,
       });
 
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
       const listing = await catalogue.open(NOW);
 
       // A failed copy costs the picture and nothing else: the publication is
@@ -436,6 +437,10 @@ describe("the publication catalogue", () => {
       expect(listing.items).toHaveLength(1);
       expect(listing.items[0]?.id).toBe(IMAGE.id);
       expect(listing.items[0]?.thumbnailUrl).toBeUndefined();
+      expect(warning).toHaveBeenCalledWith(
+        `[mychat] thumbnail copy failed publication=${IMAGE.id} stage=storage`,
+      );
+      warning.mockRestore();
 
       expect(IMAGE.permalink).toMatch(/^https:/);
     });

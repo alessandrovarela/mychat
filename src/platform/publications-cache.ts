@@ -349,12 +349,34 @@ async function copyThumbnail(
     return undefined;
   }
 
+  let body: ThumbnailBody;
   try {
-    const body = await deps.download(entry.thumbnailSource);
-    const key = thumbnailKeyFor(entry.id, body.contentType);
+    body = await deps.download(entry.thumbnailSource);
+  } catch (error) {
+    // The platform URL is deliberately not part of this line. It is a
+    // short-lived, signed address, and writing it to a log would turn a useful
+    // operational diagnostic into a credential leak. The publication id is
+    // public already, while the error name and HTTP status (when our fetch
+    // implementation supplied one) tell an operator whether the failure was
+    // the CDN or the local write that follows.
+    const status =
+      error instanceof ThumbnailDownloadError && error.status !== undefined
+        ? ` status=${error.status}`
+        : "";
+    console.warn(
+      `[mychat] thumbnail copy failed publication=${entry.id} stage=download${status}`,
+    );
+    return undefined;
+  }
+
+  const key = thumbnailKeyFor(entry.id, body.contentType);
+  try {
     await deps.thumbnails.put(key, body);
     return key;
   } catch {
+    console.warn(
+      `[mychat] thumbnail copy failed publication=${entry.id} stage=storage`,
+    );
     return undefined;
   }
 }
@@ -594,18 +616,40 @@ export function createPublicationCatalogue(
  */
 export function createFetchThumbnailDownload(): ThumbnailDownload {
   return async (url: string): Promise<ThumbnailBody> => {
-    const response = await fetch(url);
+    let response: Response;
+    try {
+      response = await fetch(url);
+    } catch {
+      throw new ThumbnailDownloadError();
+    }
 
     if (!response.ok) {
       // An expired URL answers here, and this is the throw the copy path
       // catches: the publication lists without a picture rather than not at all.
-      throw new Error(String(response.status));
+      throw new ThumbnailDownloadError(response.status);
     }
 
-    return {
-      bytes: new Uint8Array(await response.arrayBuffer()),
-      contentType:
-        response.headers.get("content-type") ?? "application/octet-stream",
-    };
+    try {
+      return {
+        bytes: new Uint8Array(await response.arrayBuffer()),
+        contentType:
+          response.headers.get("content-type") ?? "application/octet-stream",
+      };
+    } catch {
+      throw new ThumbnailDownloadError();
+    }
   };
+}
+
+/**
+ * A deliberately sparse report from the external image download.
+ *
+ * The source URL is a signed, temporary address and must never cross this
+ * boundary into a log. Its status is enough to distinguish an expired or
+ * refused CDN response from a connection failure.
+ */
+class ThumbnailDownloadError extends Error {
+  constructor(readonly status?: number) {
+    super("thumbnail download failed");
+  }
 }
