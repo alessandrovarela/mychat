@@ -1732,7 +1732,19 @@ export async function readDashboardMetrics(
     sources.clicks.samples(window.since, window.until),
   ]);
 
-  const events = entries.filter((entry) => entry.kind === "event_received");
+  // A contact interaction has one receipt: the typed `ok` row the dispatcher
+  // writes after translating the webhook payload. The delivery-level receipt
+  // has no subtype because a single payload can contain several interactions;
+  // suppression rows describe what happened AFTER the interaction. Counting
+  // either among headline events makes one message look like two or more.
+  // They stay in the full audit trail and in Activity > Diagnostics, but the
+  // dashboard's event figures answer the operator's question: what people did.
+  const events = entries.filter(
+    (entry) =>
+      entry.kind === "event_received" &&
+      entry.subtype !== undefined &&
+      entry.outcome === "ok",
+  );
   const actions = entries.filter(
     (entry) => entry.kind === "action_executed" && entry.outcome === "ok",
   );

@@ -716,6 +716,15 @@ describe("REQ-177: the panel opens with the numbers of the period", () => {
     // answer and a blank space is not.
     expect(figure(band(), words.action.messageSent)).toBe("0");
   });
+
+  it("keeps every headline value aligned when a label wraps", () => {
+    const metrics = blockAfter(
+      styleSheet("components.css"),
+      ".mc-summary .mc-metric {",
+    );
+
+    expect(metrics).toContain("align-self: start");
+  });
 });
 
 /**
@@ -1184,6 +1193,11 @@ describe("REQ-405 to REQ-408: the Links destination", () => {
     const postFunnel = screen.getByLabelText(
       text(copy.linkPostFunnel, { id: "post-1" }),
     );
+    const thumbnail = postFunnel
+      .closest(".mc-link-post")
+      ?.querySelector("img.mc-link-post__thumbnail");
+
+    expect(thumbnail).toHaveAttribute("src", "/thumbs/post-1.jpg");
     expect(within(postFunnel).getByText("18")).toBeInTheDocument();
     expect(within(postFunnel).getByText("9")).toBeInTheDocument();
     expect(
@@ -1335,14 +1349,13 @@ describe("REQ-402 to REQ-408: the revised Insights journey", () => {
     expect(
       activity.querySelector('[data-event-id="evt-platform-contact-journey"]'),
     ).toBeNull();
-    expect(activity.querySelector('[data-event-id="evt-silent"]')).toBeNull();
-
-    await openDiagnostics(2);
-    expect(
-      activity.querySelector('[data-event-id="evt-platform-contact-journey"]'),
-    ).not.toBeNull();
     expect(
       activity.querySelector('[data-event-id="evt-silent"]'),
+    ).not.toBeNull();
+
+    await openDiagnostics(1);
+    expect(
+      activity.querySelector('[data-event-id="evt-platform-contact-journey"]'),
     ).not.toBeNull();
 
     await userEvent.click(
@@ -1390,6 +1403,15 @@ describe("REQ-409 and REQ-410: the compact reading stays visually distinct", () 
     expect(sheet).not.toContain(".mc-activity__legend-list > li > span {");
     expect(track).toContain("border: 1px solid var(--border-card)");
     expect(track).toContain("border-radius: var(--radius-sm)");
+  });
+
+  it("separates consecutive trend strips from their raised values", () => {
+    const rows = blockAfter(
+      styleSheet("components.css"),
+      ".mc-trend__row + .mc-trend__row {",
+    );
+
+    expect(rows).toContain("margin-block-start: var(--space-4)");
   });
 });
 
@@ -2860,8 +2882,8 @@ function refusal(reason: string, count: number): string {
  * Four things this block exists to pin down, and each one is a line that would
  * still render, wrongly, if the screen got it wrong:
  *
- *   - technical events that fired NOTHING stay auditable in Diagnostics, while
- *     the standard list remains a concise operational reading;
+ *   - context-free technical events stay auditable in Diagnostics, while
+ *     a recognised interaction remains visible even if it fired nothing;
  *   - "no automation matched" and "no automation exists" are different answers
  *     and read differently, because the second one is a thing to go and fix;
  *   - an interaction that carried no words is not a row that stored no text,
@@ -2872,7 +2894,7 @@ describe("REQ-165: the panel shows the recent activity", () => {
   it("puts one line per event, with who wrote and what they wrote", async () => {
     await showHourly();
 
-    expect(activityLines()).toHaveLength(ACTIVITY.items.length - 1);
+    expect(activityLines()).toHaveLength(ACTIVITY.items.length);
 
     const fired = activityLine("evt-fired");
 
@@ -2932,14 +2954,14 @@ describe("REQ-165: the panel shows the recent activity", () => {
       }),
     );
 
-    expect(activityLines()).toHaveLength(ACTIVITY.items.length - 1);
+    expect(activityLines()).toHaveLength(ACTIVITY.items.length);
     expect(
       region(words.activity.title).querySelector(
         '[data-event-id="evt-diagnostic"]',
       ),
     ).toBeNull();
 
-    await openDiagnostics(2);
+    await openDiagnostics(1);
 
     expect(activityLines()).toHaveLength(ACTIVITY.items.length + 1);
     expect(
@@ -2954,7 +2976,7 @@ describe("REQ-165: the panel shows the recent activity", () => {
     ).not.toBeNull();
   });
 
-  it("keeps a platform-only numeric contact and an unmatched event in Diagnostics", async () => {
+  it("keeps a platform-only numeric contact in Diagnostics while showing an unmatched event", async () => {
     const numericContact: ActivityEventView = {
       eventId: "evt-platform-contact",
       at: "2026-08-01T10:44:00.000Z",
@@ -2985,9 +3007,9 @@ describe("REQ-165: the panel shows the recent activity", () => {
       region(words.activity.title).querySelector(
         '[data-event-id="evt-silent"]',
       ),
-    ).toBeNull();
+    ).not.toBeNull();
 
-    await openDiagnostics(2);
+    await openDiagnostics(1);
 
     expect(
       region(words.activity.title).querySelector(
@@ -3004,7 +3026,6 @@ describe("REQ-165: the panel shows the recent activity", () => {
   it("shows the event that fired nothing, and why, per reason", async () => {
     await showHourly();
 
-    await openDiagnostics(1);
     const silent = await openActivityDetails("evt-silent");
 
     // The line that costs an operator real time, and the anchor of this task:
@@ -3069,7 +3090,6 @@ describe("REQ-165: the panel shows the recent activity", () => {
       }),
     );
 
-    await openDiagnostics(1);
     const silent = await openActivityDetails("evt-silent");
 
     expect(silent).toHaveTextContent(words.activity.silence.no_match_empty);
@@ -3093,7 +3113,6 @@ describe("REQ-165: the panel shows the recent activity", () => {
       }),
     );
 
-    await openDiagnostics(1);
     const silent = await openActivityDetails("evt-silent");
 
     // The stored phrase deliberately never crosses the contract: it is
@@ -3122,18 +3141,18 @@ describe("REQ-165: the panel shows the recent activity", () => {
         line.querySelector<HTMLElement>("[data-text]")?.dataset["text"] ?? "",
     );
 
-    expect(marks).toEqual(["present", "empty", "absent"]);
+    expect(marks).toEqual(["present", "empty", "present", "absent"]);
   });
 
   it("says the list was cut, in figures", async () => {
     await showHourly();
 
-    // "Three of a hundred and thirty-seven", from the standard list's count: an
+    // "Four of a hundred and thirty-seven", from the standard list's count: an
     // operator who cannot tell a short list from a truncated one reads the
     // whole period off four lines.
     expect(
       within(region(words.activity.title)).getByText(
-        text(words.activity.truncated, { shown: 3, total: "137" }),
+        text(words.activity.truncated, { shown: 4, total: "137" }),
       ),
     ).toBeInTheDocument();
   });
@@ -3483,7 +3502,6 @@ describe("REQ-163: the codes reach the operator as words", () => {
 
     await openActivityDetails("evt-fired");
     await openActivityDetails("evt-failed");
-    await openDiagnostics(1);
     await openActivityDetails("evt-silent");
     await openActivityDetails("evt-bare");
 
@@ -3616,6 +3634,16 @@ describe("REQ-171: a failed execution says why, on the line", () => {
 });
 
 describe("REQ-413/REQ-415/REQ-416: correlated execution activity", () => {
+  it("keeps execution content inset from its accent rail", () => {
+    const execution = blockAfter(
+      styleSheet("components.css"),
+      ".mc-activity__execution {",
+    );
+
+    expect(execution).toContain("border-inline-start: 3px solid var(--accent)");
+    expect(execution).toContain("padding-inline-start: var(--space-3)");
+  });
+
   it("summarizes each DM once and exposes its honest chronological lifecycle", async () => {
     await show(
       answering({
@@ -3741,7 +3769,7 @@ describe("REQ-413/REQ-415/REQ-416: correlated execution activity", () => {
     expect(timeline).not.toHaveTextContent("Delivered");
   });
 
-  it("keeps empty historic executions and no-action events out of the standard activity list", async () => {
+  it("keeps empty historic executions out of the standard activity list", async () => {
     await show(
       answering({
         ...HOURLY,
@@ -3782,10 +3810,8 @@ describe("REQ-413/REQ-415/REQ-416: correlated execution activity", () => {
       activity.querySelector('[data-execution-id="old:empty"]'),
     ).toBeNull();
     expect(
-      within(activity).getByRole("button", {
-        name: words.activity.showDiagnostics.replace("{{count}}", "1"),
-      }),
-    ).toBeVisible();
+      activity.querySelector('[data-event-id="evt-silent"]'),
+    ).not.toBeNull();
   });
 });
 

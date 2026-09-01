@@ -720,6 +720,7 @@ export const LABEL_KEYS: readonly string[] = [
   ...Object.values(ELAPSED_KEYS),
   EVENT_SECTION.unknownKey,
   ACTION_SECTION.unknownKey,
+  "screens.dashboard.technicalEventsNote",
   ...ACTIVITY_CODE_KEYS,
 ];
 
@@ -1385,6 +1386,9 @@ function Summary({
           : t("dashboard.queue.oldest", {
               since: formatters.instant(metrics.queue.oldestPendingAt),
             })}
+      </p>
+      <p className="mc-panel__note">
+        {t("screens.dashboard.technicalEventsNote")}
       </p>
     </section>
   );
@@ -2233,11 +2237,8 @@ function isDiagnosticActivity(event: ActivityEventView): boolean {
     /^\d+$/.test(event.contactId);
   // “Nothing triggered” is useful for diagnosis, but not the compact operator
   // reading. It stays intact behind the diagnostic control with its reason.
-  const noActionRecorded = event.silence !== undefined;
-
   return (
     numericOnlyContact ||
-    noActionRecorded ||
     (event.contactId === undefined &&
       event.contactUsername === undefined &&
       event.eventText === undefined &&
@@ -2406,7 +2407,7 @@ function LinksOverview({
                   ) : (
                     <img
                       className="mc-link-post__thumbnail"
-                      src={`/assets/${post.publication.thumbnailKey}`}
+                      src={`/${post.publication.thumbnailKey}`}
                       alt=""
                     />
                   )}

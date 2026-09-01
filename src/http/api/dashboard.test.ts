@@ -405,11 +405,11 @@ describe("REQ-164: the recent activity over the contract", () => {
   it("counts the same events it lists, from the same read", async () => {
     const metrics = await metricsOf(await bootWithActivity(), "last_24_hours");
 
-    // Four rows in the trail, three of them arrivals of two distinct events.
-    // The list and the counts above it come out of one query, so they cannot
-    // describe two slightly different periods.
+    // Four rows in the trail, but only two typed receipt rows: the other rows
+    // describe what happened after those arrivals. The list and the counts
+    // above it come out of one query, so they cannot describe two periods.
     expect(metrics.events.series[0]?.subtype).toBe("comment");
-    expect(metrics.events.series[0]?.total).toBe(3);
+    expect(metrics.events.series[0]?.total).toBe(2);
     expect(metrics.activity.total).toBe(2);
   });
 

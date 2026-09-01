@@ -16,7 +16,6 @@ import {
   createDurableWorkStore,
   IN_MEMORY_DATABASE,
   openDatabase,
-  UNKNOWN_SUBTYPE,
 } from "../storage/index.js";
 import type {
   AuditRecord,
@@ -193,12 +192,16 @@ describe("the dashboard aggregation", () => {
       expect(seriesFor(metrics.events, "comment").total).toBe(2);
       expect(seriesFor(metrics.events, "direct_message").total).toBe(1);
 
-      const wholeKind = await audit.query({
+      const interactionReceipts = await audit.query({
         kind: "event_received",
         since,
         until,
       });
-      expect(metrics.events.total).toBe(wholeKind.length);
+      expect(metrics.events.total).toBe(
+        interactionReceipts.filter(
+          (entry) => entry.subtype !== undefined && entry.outcome === "ok",
+        ).length,
+      );
     });
 
     it("separates two events of the same day into their own hours (AC 42)", async () => {
@@ -219,10 +222,14 @@ describe("the dashboard aggregation", () => {
       expect(filled).toEqual([1, 1]);
     });
 
-    it("counts an event whatever the application then did with it", async () => {
-      // Received is received: a duplicate delivery and a suppressed trigger
-      // both arrived, and an operator asking how much traffic came in is not
-      // asking what was done about it.
+    it("counts one typed receipt instead of later outcomes for the same interaction", async () => {
+      // The dispatcher first records an identified receipt, then the matching
+      // engine may append duplicate or suppression outcomes. The headline is
+      // about the interaction, not every audit decision it caused.
+      await write(
+        { kind: "event_received", subtype: "comment", outcome: "ok" },
+        hoursAgo(1),
+      );
       await write(
         { kind: "event_received", subtype: "comment", outcome: "duplicate" },
         hoursAgo(1),
@@ -232,12 +239,12 @@ describe("the dashboard aggregation", () => {
         hoursAgo(2),
       );
 
-      expect(seriesFor((await report()).events, "comment").total).toBe(2);
+      expect(seriesFor((await report()).events, "comment").total).toBe(1);
     });
   });
 
   describe("REQ-106: entries that name no type (AC 36)", () => {
-    it("groups them as unknown, keeps them out of the typed series, and does not fail", async () => {
+    it("keeps delivery records out of the interaction total", async () => {
       // What `/webhook` writes: one row per DELIVERY, with no subtype, because
       // one accepted body may carry a comment and a message at once. Rows
       // written before the migration read back the same way.
@@ -250,22 +257,14 @@ describe("the dashboard aggregation", () => {
 
       const metrics = await report();
 
-      expect(metrics.events.unknown.total).toBe(2);
-      expect(sumOf(metrics.events.unknown.counts)).toBe(2);
-      // Kept apart: merged in, this line would be as tall as the traffic
-      // itself, beside the very types it is made of.
+      expect(metrics.events.unknown.total).toBe(0);
+      expect(sumOf(metrics.events.unknown.counts)).toBe(0);
+      // A delivery can hold more than one interaction, so it cannot be a
+      // separate series alongside the typed receipts.
       expect(metrics.events.series.map((series) => series.subtype)).toEqual([
         "comment",
       ]);
-      expect(metrics.events.total).toBe(3);
-
-      const direct = await audit.query({
-        kind: "event_received",
-        subtype: UNKNOWN_SUBTYPE,
-        since: metrics.window.since,
-        until: metrics.window.until,
-      });
-      expect(metrics.events.unknown.total).toBe(direct.length);
+      expect(metrics.events.total).toBe(1);
     });
 
     it("reports an empty group rather than nothing when every entry names its type", async () => {

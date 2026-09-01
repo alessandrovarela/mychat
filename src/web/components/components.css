@@ -1510,6 +1510,12 @@
   align-items: center;
   gap: var(--space-3);
 }
+/* A bar's value is deliberately raised above its column. Consecutive strips
+ * therefore need more than the card's ordinary grid gap, otherwise a high
+ * value from the lower strip is drawn over the strip above it. */
+.mc-trend__row + .mc-trend__row {
+  margin-block-start: var(--space-4);
+}
 .mc-trend__series-card {
   grid-column: 1 / -1;
   display: grid;
@@ -2642,6 +2648,13 @@
   grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
   gap: var(--space-6);
 }
+.mc-summary .mc-metric {
+  /* Grid items stretch to the height of the longest label by default. Because
+   * a figure is reversed to draw its value first, that free height would push
+   * shorter values downward. Each figure keeps its natural height so the row
+   * of values shares the same top edge. */
+  align-self: start;
+}
 
 /* The post drill-down is a short operational ledger, not a second chart. Its
  * chips retain the full funnel in one calm line, then wrap before a narrow
@@ -3090,6 +3103,7 @@
 }
 .mc-activity__execution {
   border-inline-start: 3px solid var(--accent);
+  padding-inline-start: var(--space-3);
 }
 .mc-activity__failure {
   margin: var(--space-2) 0 0;
