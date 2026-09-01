@@ -402,8 +402,9 @@ describe("REQ-091: nothing serves in a state it cannot honour", () => {
   });
 
   it("composes an S3 storage driver when its binding is configured", async () => {
+    const dir = tempDir();
     const app = await createApp(
-      baseEnv(tempDir(), {
+      baseEnv(dir, {
         STORAGE_DRIVER: "s3",
         S3_ENDPOINT: "https://account.r2.cloudflarestorage.com",
         S3_ACCESS_KEY_ID: "key",
@@ -415,6 +416,37 @@ describe("REQ-091: nothing serves in a state it cannot honour", () => {
     apps.push(app);
 
     expect(app.config.storage.driver).toBe("s3");
+    expect(app.config.storage.thumbnailsDir).toBe(join(dir, "thumbs"));
+  });
+
+  it("serves S3 deployment thumbnails from the configured local volume", async () => {
+    const dir = tempDir();
+    const publicationId = "18153371755481491";
+    const pixels = "JPEG-bytes-from-the-production-volume";
+    const thumbnailsDir = join(dir, "production-thumbnails");
+    mkdirSync(thumbnailsDir, { recursive: true });
+    writeFileSync(join(thumbnailsDir, `${publicationId}.jpg`), pixels, "utf8");
+
+    const app = await createApp(
+      baseEnv(dir, {
+        STORAGE_DRIVER: "s3",
+        THUMBNAILS_DIR: thumbnailsDir,
+        S3_ENDPOINT: "https://account.r2.cloudflarestorage.com",
+        S3_ACCESS_KEY_ID: "key",
+        S3_SECRET_ACCESS_KEY: "secret",
+        S3_BUCKET: "mychat",
+      }),
+      { clock },
+    );
+    apps.push(app);
+
+    const response = await app.server.inject({
+      method: "GET",
+      url: `/thumbs/${publicationId}.jpg`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe(pixels);
   });
 });
 

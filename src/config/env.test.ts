@@ -182,6 +182,7 @@ describe("environment configuration", () => {
 
     expect(config.storage).toEqual({
       driver: "s3",
+      thumbnailsDir: "./dev-data/thumbs",
       endpoint: s3Credentials.S3_ENDPOINT,
       accessKeyId: s3Credentials.S3_ACCESS_KEY_ID,
       secretAccessKey: s3Credentials.S3_SECRET_ACCESS_KEY,

@@ -260,12 +260,17 @@ function refusedIn(env: NodeJS.ProcessEnv): string[] {
   );
 }
 
-export type StorageConfig =
+export type StorageConfig = {
+  /**
+   * Publication thumbnails are served by this process, even when operator
+   * assets use S3-compatible storage. Their cache must therefore stay on a
+   * configured, writable local volume.
+   */
+  readonly thumbnailsDir: string;
+} & (
   | {
       readonly driver: "disk";
       readonly assetsDir: string;
-      /** Where the cached publication thumbnails live, beside the resources. */
-      readonly thumbnailsDir: string;
     }
   | {
       readonly driver: "s3";
@@ -273,7 +278,8 @@ export type StorageConfig =
       readonly accessKeyId: string;
       readonly secretAccessKey: string;
       readonly bucket: string;
-    };
+    }
+);
 
 export interface EnvConfig {
   readonly metaAppSecret: string;
@@ -347,6 +353,7 @@ function toStorageConfig(parsed: z.infer<typeof envObject>): StorageConfig {
 
   return {
     driver: "s3",
+    thumbnailsDir: parsed.THUMBNAILS_DIR,
     endpoint: s3.S3_ENDPOINT,
     accessKeyId: s3.S3_ACCESS_KEY_ID,
     secretAccessKey: s3.S3_SECRET_ACCESS_KEY,

@@ -207,14 +207,10 @@ export async function createApp(
   const config = loadEnvConfig(env);
   const limits = loadLimits(env);
 
-  // Thumbnails remain on the local binding until their bucket adapter lands in
-  // the deployment phase. Keep a stable development directory for the S3
-  // asset driver instead of refusing to start a process that can otherwise
-  // honour its resource contract.
-  const thumbnailsDir =
-    config.storage.driver === "disk"
-      ? config.storage.thumbnailsDir
-      : "./dev-data/thumbs";
+  // Thumbnails are a local cache served by this process. This remains true
+  // when operator assets use S3-compatible storage, so deployments must use
+  // their configured persistent volume rather than an internal working path.
+  const thumbnailsDir = config.storage.thumbnailsDir;
 
   // 2. Database and migrations, in that order and before anything can serve.
   const handle = openDatabase({
