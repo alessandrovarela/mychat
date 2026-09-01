@@ -9,6 +9,8 @@ import type { PublicationAutomationCoverageReader } from "../../storage/publicat
 import type { AssetCatalogue } from "../../storage/assets.js";
 import type { AssetUsageReader } from "../../storage/asset-usage.js";
 import { registerAssetRoutes } from "./assets.js";
+import { registerAccountProfileRoute } from "./account-profile.js";
+import type { AccountProfileReader } from "../../platform/account-profile.js";
 import { registerAutomationAggregateRoutes } from "./automations.js";
 import type { ClickMetricsReaders } from "./automations.js";
 import { guardContracts, installRefusals } from "./contract.js";
@@ -40,6 +42,8 @@ import { registerPublicationRoutes } from "./publications.js";
  */
 
 export interface ApiDeps {
+  /** Public identity of the Meta account, shown only to the signed-in operator. */
+  readonly accountProfile?: AccountProfileReader;
   /** The version-2 aggregate CRUD, independent from the flow catalogue. */
   readonly automations: AutomationAggregateLifecycle;
   /**
@@ -139,6 +143,12 @@ export function registerApiRoutes(scope: FastifyInstance, deps: ApiDeps): void {
       // operator sees what a deletion costs before paying it.
       deps.assetUsage ?? {
         read: () => Promise.reject(new Error("asset usage not configured")),
+      },
+    );
+    registerAccountProfileRoute(
+      api,
+      deps.accountProfile ?? {
+        read: () => Promise.resolve({ connected: false }),
       },
     );
   });

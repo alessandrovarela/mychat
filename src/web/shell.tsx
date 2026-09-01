@@ -14,6 +14,24 @@ import { useNavigation } from "./navigation.js";
 import { httpSessionClient, LOGIN_ADDRESS } from "./screens/login.js";
 import type { SessionClient } from "./screens/login.js";
 
+interface AccountProfile {
+  readonly connected: boolean;
+  readonly name?: string;
+  readonly pictureUrl?: string;
+}
+
+interface AccountProfileClient {
+  read(): Promise<AccountProfile>;
+}
+
+const httpAccountProfileClient: AccountProfileClient = {
+  async read(): Promise<AccountProfile> {
+    const response = await fetch("/api/account-profile");
+    if (!response.ok) throw new Error("account profile unavailable");
+    return ((await response.json()) as { profile: AccountProfile }).profile;
+  },
+};
+
 /**
  * The casing every private screen is rendered inside: the navigation rail, and
  * the column the screen occupies beside it (REQ-112).
@@ -208,6 +226,8 @@ export interface AppShellProps {
    * once, so a second copy cannot drift from the route that actually revokes.
    */
   readonly session?: SessionClient;
+  /** Injected by tests; production reads the authenticated identity endpoint. */
+  readonly accountProfile?: AccountProfileClient;
 }
 
 /**
@@ -229,6 +249,7 @@ export function AppShell({
   current,
   children,
   session = httpSessionClient,
+  accountProfile = httpAccountProfileClient,
 }: AppShellProps): ReactElement {
   const { t } = useLocale();
   // Taken from the context rather than received as a property: the rail is one
@@ -240,6 +261,8 @@ export function AppShell({
   const [asking, setAsking] = useState(false);
   const [ending, setEnding] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [profile, setProfile] = useState<AccountProfile>();
+  const [pictureBroken, setPictureBroken] = useState(false);
 
   /** Whether the rail is a drawer, and whether the drawer is open. */
   const narrow = useNarrowViewport();
@@ -250,6 +273,21 @@ export function AppShell({
   const navId = useId();
   const menuButton = useRef<HTMLButtonElement>(null);
   const work = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    let current = true;
+    void accountProfile
+      .read()
+      .then((value) => {
+        if (current) setProfile(value);
+      })
+      .catch(() => {
+        if (current) setProfile({ connected: false });
+      });
+    return () => {
+      current = false;
+    };
+  }, [accountProfile]);
 
   // The drawer, by the id the button already names. No second ref for the same
   // element: `aria-controls` exists to point at exactly this, and a rail that
@@ -393,6 +431,30 @@ export function AppShell({
       label={t("nav.label")}
       brandLead={t("nav.brandLead")}
       brandAccent={t("nav.brandAccent")}
+      account={
+        profile === undefined ? null : profile.connected &&
+          profile.name !== undefined ? (
+          <div className="mc-nav__account" aria-label={t("nav.account.label")}>
+            {profile.pictureUrl !== undefined && !pictureBroken ? (
+              <img
+                className="mc-nav__account-picture"
+                src={profile.pictureUrl}
+                alt=""
+                onError={(): void => setPictureBroken(true)}
+              />
+            ) : (
+              <span className="mc-nav__account-fallback" aria-hidden="true">
+                {profile.name.slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            <span className="mc-nav__account-name">{profile.name}</span>
+          </div>
+        ) : (
+          <p className="mc-nav__account mc-nav__account--empty">
+            {t("nav.account.unavailable")}
+          </p>
+        )
+      }
       current={current}
       onNavigate={goTo}
       items={[

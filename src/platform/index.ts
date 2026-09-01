@@ -81,3 +81,9 @@ export type { OperationalStatus, StatusDeps } from "./status.js";
 export { createFollowLink, FOLLOW_FIELD } from "./follow.js";
 
 export type { FollowLinkDeps } from "./follow.js";
+
+export { createAccountProfileReader } from "./account-profile.js";
+export type {
+  AccountProfile,
+  AccountProfileReader,
+} from "./account-profile.js";

@@ -276,6 +276,10 @@
     "closeMenu": "Close screens menu",
     "brandLead": "My",
     "brandAccent": "Chat",
+    "account": {
+      "label": "Connected Meta account",
+      "unavailable": "Meta account unavailable"
+    },
     "dashboard": "Panel",
     "automations": "Automations",
     "publications": "Publications",

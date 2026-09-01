@@ -91,6 +91,8 @@ export interface AppNavProps {
   readonly brandLead: string;
   /** Its second word, the one the mark writes in the accent. */
   readonly brandAccent: string;
+  /** Connected account identity, kept beside the product mark in the rail. */
+  readonly account?: ReactNode;
   /** The id of the screen on show. Sets `aria-current="page"`. */
   readonly current?: string;
   /** Given, the rail intercepts the click instead of following the href. */
@@ -110,6 +112,7 @@ export function AppNav({
   label,
   brandLead,
   brandAccent,
+  account,
   current,
   onNavigate,
   groups = [],
@@ -138,6 +141,7 @@ export function AppNav({
   return (
     <nav className="mc-nav" id={id} hidden={hidden} aria-label={label}>
       <Brand lead={brandLead} accent={brandAccent} />
+      {account}
 
       <ul className="mc-nav__list">{items.map(renderItem)}</ul>
 

@@ -2172,6 +2172,44 @@
 .mc-brand__accent {
   color: var(--accent);
 }
+.mc-nav__account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: calc(var(--space-4) * -1) 0 0;
+  min-height: var(--tap);
+  color: var(--fg-2);
+  font-size: var(--text-sm);
+}
+.mc-nav__account-picture,
+.mc-nav__account-fallback {
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+}
+.mc-nav__account-picture {
+  object-fit: cover;
+  background: var(--bg-hover);
+}
+.mc-nav__account-fallback {
+  display: grid;
+  place-items: center;
+  background: var(--bg-hover);
+  color: var(--fg-1);
+  font-weight: var(--weight-semibold);
+}
+.mc-nav__account-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mc-nav__account--empty {
+  color: var(--fg-3);
+}
+.mc-nav__account[hidden] {
+  display: none;
+}
 .mc-nav__list {
   display: flex;
   flex-direction: column;

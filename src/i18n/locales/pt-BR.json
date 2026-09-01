@@ -279,6 +279,10 @@
     "closeMenu": "Fechar menu de telas",
     "brandLead": "My",
     "brandAccent": "Chat",
+    "account": {
+      "label": "Conta Meta conectada",
+      "unavailable": "Conta Meta indisponível"
+    },
     "dashboard": "Painel",
     "automations": "Automações",
     "publications": "Publicações",

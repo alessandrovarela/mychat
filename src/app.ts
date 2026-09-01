@@ -36,6 +36,7 @@ import { createLocalePreference } from "./i18n/preference.js";
 import {
   CREDENTIAL_CHECK_KEY,
   createCredentialCheckHandler,
+  createAccountProfileReader,
   createFetchTransport,
   createFollowLink,
   createInstagramLoginAccount,
@@ -489,6 +490,7 @@ export async function createApp(
           // below. This is the same binding used by the engine; the public
           // `/assets` route registered above remains outside that scope.
           assets,
+          accountProfile: createAccountProfileReader({ account, transport }),
           // REQ-293: what a deletion will break, read before it happens. Over
           // the stored definitions as text, so an automation the current schema
           // can no longer parse still counts as a user of the file.
