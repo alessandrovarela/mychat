@@ -16,7 +16,7 @@ export function inspectProductionImage(source) {
     "npm ci --omit=dev",
     "npx tsc --noEmit false --outDir build",
     "COPY --from=build --chown=node:node /app/build ./build",
-    "COPY --from=build --chown=node:node /app/dist ./dist",
+    "COPY --from=build --chown=node:node /app/dist ./build/dist",
     "COPY --from=build --chown=node:node /app/src/i18n/locales ./build/src/i18n/locales",
     "COPY --chown=node:node drizzle ./build/drizzle",
     "USER node",

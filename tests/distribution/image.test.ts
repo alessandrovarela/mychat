@@ -13,6 +13,14 @@ describe("production image", () => {
     expect(verifyProductionImage()).toEqual({ missing: [], forbidden: [] });
   });
 
+  it("places the web bundle where the compiled static route resolves it", () => {
+    const source = readFileSync(resolve(projectRoot, "Dockerfile"), "utf8");
+
+    expect(source).toContain(
+      "COPY --from=build --chown=node:node /app/dist ./build/dist",
+    );
+  });
+
   it("rejects a Dockerfile that reintroduces development runtime tooling", () => {
     const source = readFileSync(resolve(projectRoot, "Dockerfile"), "utf8");
     const sabotaged = source.replace(

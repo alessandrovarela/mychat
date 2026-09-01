@@ -38,7 +38,10 @@ ENV NODE_ENV=production
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json ./package.json
 COPY --from=build --chown=node:node /app/build ./build
-COPY --from=build --chown=node:node /app/dist ./dist
+# The compiled static-route module lives at /app/build/src/http. Its
+# WEB_DIST_DIR resolves ../../dist/web from there, so the web bundle must live
+# under /app/build/dist rather than alongside the compiled application.
+COPY --from=build --chown=node:node /app/dist ./build/dist
 COPY --from=build --chown=node:node /app/src/i18n/locales ./build/src/i18n/locales
 COPY --chown=node:node drizzle ./build/drizzle
 
