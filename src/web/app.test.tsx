@@ -418,13 +418,32 @@ describe("REQ-302: the root leads somewhere, and so does an address nobody claim
     });
   });
 
-  it("asks the instance nothing while the address belongs to a screen", () => {
-    const probe = createProbe(false);
+  it("asks the instance whether a direct private screen still has a session", () => {
+    const probe = createProbe(true);
 
     render(<App routes={stubbed} pathname={DASHBOARD_ADDRESS} probe={probe} />);
 
     expect(screen.getByTestId(DASHBOARD_ADDRESS)).toBeInTheDocument();
-    expect(probe.asked).toBe(0);
+    expect(probe.asked).toBe(1);
+  });
+
+  it("sends a direct private screen to access when the session is absent", async () => {
+    window.history.pushState({}, "", DASHBOARD_ADDRESS);
+
+    render(
+      <App
+        routes={stubbed}
+        pathname={DASHBOARD_ADDRESS}
+        probe={createProbe(false)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId(LOGIN_ADDRESS)).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe(LOGIN_ADDRESS);
+    expect(screen.queryByRole("navigation")).toBeNull();
   });
 });
 

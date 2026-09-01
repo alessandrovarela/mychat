@@ -104,10 +104,8 @@ export interface AppProps {
    */
   readonly session?: SessionClient;
   /**
-   * Injected by tests. Asked ONLY when the address on show belongs to no
-   * screen, so an ordinary screen change costs no request at all: the doorway
-   * is the one place in the interface that has to know whether a session is
-   * open before it can decide anything.
+   * Injected by tests. Asked by every doorway and every private screen, so a
+   * deep link cannot draw a protected screen after the session has ended.
    */
   readonly probe?: SessionProbe;
 }
@@ -201,6 +199,53 @@ interface ScreenProps {
   readonly probe: SessionProbe;
 }
 
+interface PrivateScreenProps {
+  readonly route: RouteEntry;
+  readonly screen: ReactElement;
+  readonly session?: SessionClient;
+  readonly probe: SessionProbe;
+}
+
+/**
+ * The guard around every private screen.
+ *
+ * Static hosting has to send the SPA document for a deep link. The browser
+ * therefore asks the same private endpoint as `Doorway`; a 401 replaces the
+ * deep link with `/login`. The screen remains mounted while that asynchronous
+ * answer is in flight, so navigation never becomes a blank page on a slow
+ * connection.
+ */
+function PrivateScreen({
+  route,
+  screen,
+  session,
+  probe,
+}: PrivateScreenProps): ReactElement | null {
+  const { redirect } = useNavigation();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void probe.isOpen().then((open: boolean): void => {
+      if (cancelled) return;
+
+      if (!open) {
+        redirect(LOGIN_ADDRESS);
+      }
+    });
+
+    return (): void => {
+      cancelled = true;
+    };
+  }, [probe, redirect, route.path]);
+
+  return (
+    <AppShell current={route.parent ?? route.path} session={session}>
+      {screen}
+    </AppShell>
+  );
+}
+
 /** The screen registered for the address the navigation reports. */
 function Screen({ routes, session, probe }: ScreenProps): ReactElement | null {
   const { address } = useNavigation();
@@ -221,12 +266,11 @@ function Screen({ routes, session, probe }: ScreenProps): ReactElement | null {
   return match.public === true ? (
     <main className="mc-public">{screen}</main>
   ) : (
-    // The route the RAIL marks, which is the screen's own address unless it is a
-    // detail reached from another screen: the automation form marks the
-    // automations it belongs to, so the operator does not lose their place by
-    // being inside a form (REQ-147).
-    <AppShell current={match.parent ?? match.path} session={session}>
-      {screen}
-    </AppShell>
+    <PrivateScreen
+      route={match}
+      screen={screen}
+      session={session}
+      probe={probe}
+    />
   );
 }
