@@ -35,6 +35,16 @@ afterEach(() => {
 });
 
 describe("public release allowlist", () => {
+  it("allows the two public Meta guides but excludes the internal topology", () => {
+    expect(config.allowedFiles).toEqual(
+      expect.arrayContaining([
+        "docs/meta-app-setup.md",
+        "docs/meta-app-setup.en.md",
+      ]),
+    );
+    expect(config.allowedFiles).not.toContain("docs/meta-environments.md");
+  });
+
   it("derives a clean public tree from explicit files and directories only", () => {
     const source = temporaryDirectory();
     const output = resolve(temporaryDirectory(), "public");

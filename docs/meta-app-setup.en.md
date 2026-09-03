@@ -103,6 +103,12 @@ The response must be exactly `123`. A `403` means the verify tokens differ; a
 route must remain public: do not put dashboard authentication, Cloudflare
 Access, or a login screen in front of it.
 
+When the endpoint is accepted, Meta shows a green check and the **Webhook
+fields** list. Use **Test** beside `comments` once and confirm that MyChat
+records the event. This is the webhook connectivity check for the guide. Do not
+use Meta's `messages` test as a direct-message test: it validates delivery to
+the endpoint but does not emulate an inbound Instagram DM that MyChat can show.
+
 ## 5. Add and accept the Instagram tester invite
 
 In **App roles -> Roles**, add the professional account as **Instagram Tester**

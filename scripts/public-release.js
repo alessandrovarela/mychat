@@ -31,7 +31,6 @@ const privateDocumentation = new Set([
   "docs/analise-ux-automacoes-concorrentes.md",
   "docs/guia-de-testes-fase-3.md",
   "docs/handoff-design.md",
-  "docs/meta-app-setup.md",
   "docs/platform-limits.md",
   "docs/prototipo-automacao.html",
 ]);

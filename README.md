@@ -55,5 +55,6 @@ Read [the authentication guide](docs/authentication.md) before entering any
 credential. Keep `/webhook` public: an external authentication layer must
 explicitly bypass it, or Meta deliveries silently stop.
 
-For the Instagram Login setup walkthrough, see
-[the Meta setup guide](docs/meta-app-setup.md).
+For the Instagram Login setup walkthrough, see the
+[pt-BR Meta setup guide](docs/meta-app-setup.md) or the
+[English Meta setup guide](docs/meta-app-setup.en.md).
