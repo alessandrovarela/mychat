@@ -1,9 +1,8 @@
 # Meta app setup
 
 This guide takes one MyChat installation from the Meta prerequisites to a real
-Instagram event. Follow it once for each environment: use a different Meta app,
-professional Instagram account, HTTPS callback, secrets and `.env` file for
-test and production. Do not point the production callback at a local tunnel.
+Instagram event. Follow it once for your production installation: use its Meta
+app, professional Instagram account, HTTPS callback, secrets and `.env` file.
 
 > **Illustration placeholders:** replace every `[screenshot: ...]` marker with
 > a current capture of the Meta UI during the external verification in phase 4e.
@@ -13,11 +12,8 @@ test and production. Do not point the production callback at a local tunnel.
 
 - A public professional Instagram account, either Business or Creator.
 - A public HTTPS URL for the privacy policy.
-- A public HTTPS callback for this environment, for example
-  `https://test.example.com/webhook`. A tunnel is suitable only for the test
-  environment, never for production.
-- A second Instagram account that does not own the professional account. It is
-  needed for the real end-to-end test.
+- A public HTTPS callback for the installation, for example
+  `https://mychat.example.com/webhook`.
 
 Never commit a token, app secret, verify token, or `.env` file. Use placeholders
 in examples, such as `META_ACCESS_TOKEN=<token-from-meta>`.
@@ -28,7 +24,7 @@ in examples, such as `META_ACCESS_TOKEN=<token-from-meta>`.
 Meta app -> Instagram Login permissions -> privacy policy
     -> HTTPS /webhook verification -> Instagram tester accepts invite
     -> access token + account ID -> event subscriptions -> Live mode
-    -> second-account comment/message -> MyChat evidence
+    -> real comment/message -> MyChat evidence
 ```
 
 ## 1. Create the app and choose the use case
@@ -165,22 +161,21 @@ the app. [screenshot: publish live]
 Development mode does not prove real delivery. Live mode is required before a
 normal Instagram event can exercise an automation.
 
-## 9. Perform a real test with the second account
+## 9. Perform a real automation test
 
-Create or enable a small test automation in MyChat. From the separate account,
-comment on a post owned by the configured professional account, or send it a
-direct message. Do not use the account owner for this check: its event may not
-be delivered.
+Create or enable a small test automation in MyChat, then make a test comment on
+a post owned by the configured professional account. If the automation sends a
+private reply, confirm it in the conversation used for the comment.
 
 Record all three pieces of evidence:
 
 1. Meta sent an event to the HTTPS callback.
 2. MyChat recorded and executed the automation.
-3. The second account received the expected reply or message.
+3. The configured action completed as expected.
 
 The successful test is not merely a configured token or a green callback
 verification. It is the complete event, execution, and result observed by the
-second account.
+operator.
 
 ## Troubleshooting
 
@@ -191,8 +186,4 @@ second account.
 | No token can be generated | Accept the Instagram Tester invitation inside Instagram and ensure the account is public and professional. |
 | Messages work but comments do not | Verify both the app fields and account `subscribed_fields` contain `comments`. |
 | The token works but sends fail | Use `user_id` as `INSTAGRAM_ACCOUNT_ID`, not the app-scoped `id`. |
-| Nothing arrives from a normal account | Confirm Live mode, the public `/webhook` bypass, and test using the separate account. |
-
-For a production incident, do not reroute production traffic to a local test
-tunnel. Diagnose production with its own HTTPS callback, logs, secret, account,
-and `.env`; keep test isolated.
+| Nothing arrives after a real comment | Confirm Live mode and the public `/webhook` bypass. |

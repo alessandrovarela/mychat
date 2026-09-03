@@ -5,10 +5,9 @@ Login. Ele leva uma instalação do domínio e HTTPS até a primeira prova real 
 evento. Os rótulos das capturas estão em inglês, como aparecem no painel da
 Meta, e as imagens são anonimizadas.
 
-Use este roteiro uma vez por ambiente. Produção e teste precisam ter app Meta,
-conta profissional, callback HTTPS, segredos, arquivo `.env` e dados
-persistidos próprios. Nunca copie um token, segredo, callback ou volume de um
-ambiente para o outro.
+Use este roteiro uma vez para a sua instalação de produção. Ela precisa de app
+Meta, conta profissional, callback HTTPS, segredos, arquivo `.env` e dados
+persistidos próprios.
 
 ## Antes de começar: domínio, HTTPS e instalação
 
@@ -17,13 +16,7 @@ Prepare estes itens antes de criar ou preencher qualquer credencial Meta:
 - uma VM com domínio próprio, DNS apontado e HTTPS válido;
 - uma URL pública HTTPS para a política de privacidade;
 - uma conta profissional do Instagram (Business ou Creator), pública;
-- uma segunda conta do Instagram, que fará o teste ponta a ponta;
 - uma instalação do MyChat separada para este ambiente.
-
-Em desenvolvimento, um túnel HTTPS pode substituir o domínio público, mas
-nunca aponte o callback de produção para túnel ou processo local de teste.
-Mantenha os dois ambientes com apps, contas, callbacks, segredos, `.env` e
-volumes diferentes.
 
 A ordem deste guia é deliberada: domínio e HTTPS vêm antes das credenciais;
 as credenciais são conferidas no MyChat antes de cadastrar callback ou webhook;
@@ -281,21 +274,21 @@ o app em modo **Live**.
 O modo de desenvolvimento não prova entrega normal de eventos. A publicação
 é necessária antes da prova real.
 
-## 10. Fazer a prova real com a segunda conta
+## 10. Fazer a prova real da automação
 
-Crie ou ative uma automação pequena no MyChat. A partir da segunda conta,
-comente em uma publicação da conta profissional configurada. Não use a conta
-operadora para este teste, pois o próprio dono pode não gerar o evento esperado.
+Crie ou ative uma automação pequena no MyChat e faça um comentário de teste em
+uma publicação da conta profissional configurada. Se a automação enviar uma
+resposta privada, confira a conversa no perfil que fez o comentário.
 
 Registre os três fatos:
 
 1. a Meta enviou o evento ao callback HTTPS;
 2. o MyChat registrou e executou a automação;
-3. a segunda conta recebeu a resposta esperada.
+3. a ação configurada foi concluída conforme esperado.
 
 Token configurado, callback verde ou teste manual do painel, isoladamente, não
 são prova ponta a ponta. Se o teste falhar, confira o diagnóstico abaixo sem
-misturar o ambiente de produção com o túnel de teste.
+alterar as credenciais ou a URL pública que acabaram de ser validadas.
 
 ## Diagnóstico de erros comuns
 
@@ -307,7 +300,7 @@ misturar o ambiente de produção com o túnel de teste.
 | Publicações não carregam | Confira `META_ACCESS_TOKEN`, `INSTAGRAM_ACCOUNT_ID` e `account_type` antes do webhook. |
 | Mensagens chegam, comentários não | Confira `comments` na assinatura do app e em `subscribed_fields` da conta. |
 | Token é válido, mas o envio falha | Use `user_id` como `INSTAGRAM_ACCOUNT_ID`, não o `id` com escopo do app. |
-| Nada chega de uma conta normal | Confirme modo Live, bypass público de `/webhook` e teste com a segunda conta. |
+| Nada chega após um comentário real | Confirme modo Live e bypass público de `/webhook`. |
 
 ## Sobre App Review
 

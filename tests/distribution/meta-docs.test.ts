@@ -21,7 +21,7 @@ describe("REQ-424: bilingual illustrated Meta setup tutorial", () => {
       "Testar comentários antes de assinar a conta",
       "Ativar a assinatura dos eventos",
       "Publicar o app em modo Live",
-      "Fazer a prova real com a segunda conta",
+      "Fazer a prova real da automação",
       "Diagnóstico de erros comuns",
       "META_ACCESS_TOKEN=<token-gerado-pela-meta>",
       "META_APP_SECRET=<segredo-do-app-instagram>",
@@ -56,7 +56,7 @@ describe("REQ-424: bilingual illustrated Meta setup tutorial", () => {
       "Instagram Tester",
       "Webhook subscription",
       "Live mode",
-      "second account",
+      "real automation test",
       "Troubleshooting",
       "META_APP_SECRET=<",
       "/webhook",
@@ -65,12 +65,26 @@ describe("REQ-424: bilingual illustrated Meta setup tutorial", () => {
     }
   });
 
-  it("makes a second-account event, execution, and result the proof", () => {
+  it("makes a real event, execution, and result the proof", () => {
     const tutorial = readDocument("docs/meta-app-setup.md");
 
     expect(tutorial).toContain("a Meta enviou o evento ao callback HTTPS");
     expect(tutorial).toContain("o MyChat registrou e executou a automação");
-    expect(tutorial).toContain("a segunda conta recebeu a resposta esperada");
+    expect(tutorial).toContain(
+      "a ação configurada foi concluída conforme esperado",
+    );
+  });
+
+  it("keeps development topology and a second account out of the public guide", () => {
+    for (const path of [
+      "docs/meta-app-setup.md",
+      "docs/meta-app-setup.en.md",
+    ]) {
+      const tutorial = readDocument(path).toLowerCase();
+      expect(tutorial).not.toContain("segunda conta");
+      expect(tutorial).not.toContain("second account");
+      expect(tutorial).not.toContain("local tunnel");
+    }
   });
 
   it("keeps the public entry points and every referenced image on the allowlist", () => {
