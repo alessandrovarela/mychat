@@ -67,15 +67,6 @@ suficiente para a instalação operar a própria conta. Advanced Access e App
 Review são necessários para operar contas de terceiros, não para o caso de uma
 instância que opera a própria conta.
 
-### Caminho opcional de usuário de sistema
-
-Se você já possui um portfólio empresarial e precisa operar contas de terceiros,
-pode escolher o caminho de usuário de sistema. Ele usa a Facebook Graph API,
-`instagram_manage_comments` e um token sem expiração, além dos requisitos do
-portfólio. Instagram Login usa `graph.instagram.com`, as permissões
-`instagram_business_*` e o token renovável. Escolha um caminho por instalação,
-registre a escolha no ambiente e não misture tokens ou IDs entre os caminhos.
-
 ## 3. Associar e aceitar a conta testadora
 
 No painel do app, abra **App roles** e depois **Roles**. Abra a área de contas
@@ -308,7 +299,3 @@ Advanced Access e App Review são voltados a aplicações que operam contas de
 terceiros. Uma instalação que opera somente a própria conta pode usar Standard
 Access no caminho Instagram Login, sem CNPJ, portfólio empresarial ou análise
 do app, desde que respeite os requisitos mostrados no painel.
-
-Isso não torna os caminhos intercambiáveis. O usuário de sistema exige
-portfólio empresarial, usa outro host, outra permissão de comentários e outro
-modelo de token. Registre um único caminho por ambiente.

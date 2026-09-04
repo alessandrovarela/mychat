@@ -52,15 +52,6 @@ Standard access is sufficient for an installation operating its own account.
 Advanced Access and App Review can be required when the app operates accounts
 for other people. Do not assume the two situations are interchangeable.
 
-### Optional system-user path
-
-An installation with a Meta business portfolio may instead use a system user
-and its non-expiring token. That path uses the Facebook Graph host and the
-`instagram_manage_comments` permission, rather than the Instagram Login host
-and `instagram_business_manage_comments`. It also requires the portfolio and
-its prerequisites. Choose one path for an installation, record it in its
-environment configuration, and do not copy tokens between the paths.
-
 ## 3. Add privacy policy and category
 
 In **App settings -> Basic**, set the public Privacy Policy URL and choose the

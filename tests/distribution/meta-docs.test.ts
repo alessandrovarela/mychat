@@ -84,6 +84,8 @@ describe("REQ-424: bilingual illustrated Meta setup tutorial", () => {
       expect(tutorial).not.toContain("segunda conta");
       expect(tutorial).not.toContain("second account");
       expect(tutorial).not.toContain("local tunnel");
+      expect(tutorial).not.toContain("usuário de sistema");
+      expect(tutorial).not.toContain("system user");
     }
   });
 
