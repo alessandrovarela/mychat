@@ -393,6 +393,29 @@ describe("REQ-091: one command brings the process up", () => {
 });
 
 describe("REQ-448: legacy environment migration", () => {
+  it("marks an installation with an existing operator credential as setup complete", async () => {
+    const dir = tempDir();
+    const legacy = openDatabase({ databasePath: join(dir, "mychat.db") });
+    await setOperatorPassword(
+      "existing-operator-password",
+      createOperatorCredentialStore(legacy.db),
+      NOW,
+    );
+    legacy.close();
+
+    const app = await boot(baseEnv(dir));
+    const setup = await app.server.inject({
+      method: "GET",
+      url: "/api/instance/setup",
+    });
+
+    expect(setup.statusCode).toBe(200);
+    expect(setup.json()).toMatchObject({ complete: true });
+    await expect(
+      createPreferenceStore(inspect(dir).db).read("initialSetupComplete"),
+    ).resolves.toBe("complete");
+  });
+
   it("imports legacy webhook values once and preserves a panel replacement", async () => {
     const dir = tempDir();
     await boot(baseEnv(dir, { PUBLIC_ORIGIN: "https://first.example.test" }));

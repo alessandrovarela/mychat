@@ -282,11 +282,18 @@ export async function createApp(
     // that protects storage and webhook values must protect them at rest.
     const credentials = createCredentialStore(db, cipher);
     const storageConfiguration = createStorageConfigurationStore(db, cipher);
+    const operatorCredentials = createOperatorCredentialStore(db);
     const setupState = createInitialSetupState({
       read: () => createPreferenceStore(db).read("initialSetupComplete"),
       write: (value, at) =>
         createPreferenceStore(db).write("initialSetupComplete", value, at),
     });
+    if (
+      !(await setupState.isComplete()) &&
+      (await operatorCredentials.read()) !== undefined
+    ) {
+      await setupState.complete(now());
+    }
     const setupStorage = createSetupStoragePreference({
       store: storageConfiguration,
       ...(options.assetFetch !== undefined && {
@@ -578,7 +585,7 @@ export async function createApp(
     // session exists. Every other API route remains in the guarded scope.
     registerSetupRoutes(server, {
       state: setupState,
-      credentials: createOperatorCredentialStore(db),
+      credentials: operatorCredentials,
       storage: setupStorage,
       locale,
       timeZone,
@@ -601,7 +608,7 @@ export async function createApp(
       server,
       {
         sessions: createSessionStore(db),
-        credentials: createOperatorCredentialStore(db),
+        credentials: operatorCredentials,
         cookie: loadSessionCookieConfig(env),
         now,
         // REQ-034. The count lives in memory on purpose (its whole horizon is
@@ -684,7 +691,7 @@ export async function createApp(
           // next wait is created under: one source, two consumers.
           instanceSettings,
           configuration: {
-            operatorCredentials: createOperatorCredentialStore(db),
+            operatorCredentials,
             platformCredentials: credentials,
             storage: storageConfiguration,
             integration: integrationSettings,
