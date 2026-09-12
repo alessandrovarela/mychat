@@ -5,6 +5,7 @@ import { assertMetaEnvironmentIsolation } from "../../scripts/meta-environments.
 
 const root = resolve(import.meta.dirname, "../..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
+const privateOnly = process.env.MYCHAT_PUBLIC_RELEASE === "1" ? it.skip : it;
 
 describe("Phase 4c Meta distribution contract", () => {
   it("publishes both safe guides without the private topology note", () => {
@@ -34,7 +35,7 @@ describe("Phase 4c Meta distribution contract", () => {
     }
   });
 
-  it("aligns isolation guidance with the executable guard", () => {
+  privateOnly("aligns isolation guidance with the executable guard", () => {
     expect(read("docs/meta-environments.md")).toContain("App ID");
     expect(() =>
       assertMetaEnvironmentIsolation({
@@ -58,42 +59,45 @@ describe("Phase 4c Meta distribution contract", () => {
     ).toThrow("share appId");
   });
 
-  it("records the real topology and keeps secrets outside the reference", () => {
-    const document = read("docs/meta-environments.md");
+  privateOnly(
+    "records the real topology and keeps secrets outside the reference",
+    () => {
+      const document = read("docs/meta-environments.md");
 
-    for (const required of [
-      "https://mychat.crivo.digital",
-      "https://mychat-local.crivo.digital/webhook",
-      "OVHcloud",
-      "AMD64",
-      "mychat-local",
-      "mychat-production",
-      "mychat-test",
-      "App Meta",
-      "Conta Instagram",
-      "Dados persistidos",
-      "Checklist de verificação",
-      "As duas rotas `/webhook` precisam permanecer públicas",
-      "O domínio da produção nunca aponta para o túnel local",
-    ]) {
-      expect(document).toContain(required);
-    }
+      for (const required of [
+        "https://mychat.crivo.digital",
+        "https://mychat-local.crivo.digital/webhook",
+        "OVHcloud",
+        "AMD64",
+        "mychat-local",
+        "mychat-production",
+        "mychat-test",
+        "App Meta",
+        "Conta Instagram",
+        "Dados persistidos",
+        "Checklist de verificação",
+        "As duas rotas `/webhook` precisam permanecer públicas",
+        "O domínio da produção nunca aponta para o túnel local",
+      ]) {
+        expect(document).toContain(required);
+      }
 
-    for (const forbidden of [
-      "META_ACCESS_TOKEN=",
-      "META_APP_SECRET=",
-      "WEBHOOK_VERIFY_TOKEN=",
-      "AWS_ACCESS_KEY_ID=",
-      "AWS_SECRET_ACCESS_KEY=",
-      "-----BEGIN",
-      "ssh-rsa ",
-      "ssh-ed25519 ",
-    ]) {
-      expect(document).not.toContain(forbidden);
-    }
+      for (const forbidden of [
+        "META_ACCESS_TOKEN=",
+        "META_APP_SECRET=",
+        "WEBHOOK_VERIFY_TOKEN=",
+        "AWS_ACCESS_KEY_ID=",
+        "AWS_SECRET_ACCESS_KEY=",
+        "-----BEGIN",
+        "ssh-rsa ",
+        "ssh-ed25519 ",
+      ]) {
+        expect(document).not.toContain(forbidden);
+      }
 
-    expect(document).not.toMatch(
-      /mychat\.crivo\.digital[^\n]*(?:mychat-local|localhost)/i,
-    );
-  });
+      expect(document).not.toMatch(
+        /mychat\.crivo\.digital[^\n]*(?:mychat-local|localhost)/i,
+      );
+    },
+  );
 });
