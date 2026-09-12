@@ -1,4 +1,22 @@
+import { randomBytes } from "node:crypto";
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { t } from "../i18n/index.js";
+import {
+  checkS3Connection,
+  validateS3AssetConfiguration,
+} from "../storage/s3-assets.js";
+import type { S3AssetConfig, S3ConnectionCheck } from "../storage/s3-assets.js";
+import type {
+  PersistedStorageConfiguration,
+  StorageConfigurationStore,
+} from "../storage/storage-configuration.js";
 
 /**
  * What the INSTANCE decides about waiting, and what a step stopped deciding
@@ -27,6 +45,272 @@ import { t } from "../i18n/index.js";
 
 /** The row that carries the four values in `instance_preferences`. */
 export const INSTANCE_SETTINGS_PREFERENCE_KEY = "instanceSettings";
+
+/** The durable fact that the one-time setup has been completed (REQ-441). */
+export const INITIAL_SETUP_PREFERENCE_KEY = "initialSetupComplete";
+
+/** AES-256 needs exactly 32 random bytes. */
+export const LOCAL_ENCRYPTION_KEY_BYTES = 32;
+
+/** The default name beside the SQLite database, inside the persistent volume. */
+export const LOCAL_ENCRYPTION_KEY_FILE = "mychat-secrets.key";
+
+/**
+ * The small key/value contract used by the setup marker.  It intentionally
+ * matches the existing preference adapter, so the marker needs no new table
+ * and an absent row remains an unconfigured installation.
+ */
+export interface InitialSetupStore {
+  read(): Promise<string | undefined>;
+  write(value: string, now: Date): Promise<void>;
+}
+
+export interface InitialSetupState {
+  isComplete(): Promise<boolean>;
+  complete(now: Date): Promise<void>;
+}
+
+export type SetupStorageChoice =
+  | { readonly driver: "local" }
+  | {
+      readonly driver: "r2" | "s3";
+      readonly endpoint: string;
+      readonly accessKeyId: string;
+      readonly secretAccessKey: string;
+      readonly bucket: string;
+    };
+
+export type SetupStorageResult =
+  { readonly ok: true } | { readonly ok: false; readonly reason: string };
+
+export interface SetupStoragePreference {
+  choose(value: SetupStorageChoice, now: Date): Promise<SetupStorageResult>;
+  read(): Promise<PersistedStorageConfiguration | undefined>;
+}
+
+/** Persisted, operator-controlled endpoints and the webhook verification
+ * secret. The secret is encrypted before it enters the preference store. */
+export const INTEGRATION_SETTINGS_PREFERENCE_KEY = "integrationSettings";
+export interface IntegrationSettings {
+  readonly publicOrigin?: string;
+  /** A server-side check has reached this instance through its public HTTPS URL. */
+  readonly publicOriginVerifiedAt?: string;
+  readonly webhookVerifyToken?: string;
+  readonly metaAppSecret?: string;
+  readonly webhookConfirmedAt?: string;
+}
+export interface IntegrationSettingsPreference {
+  read(): Promise<IntegrationSettings>;
+  choose(change: IntegrationSettings, now: Date): Promise<IntegrationSettings>;
+}
+export function validPublicOrigin(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.pathname === "/" &&
+      url.search === "" &&
+      url.hash === ""
+    );
+  } catch {
+    return false;
+  }
+}
+export function createIntegrationSettingsPreference(deps: {
+  readonly store: InitialSetupStore;
+  readonly cipher: {
+    encrypt(value: string): string;
+    decrypt(value: string): string;
+  };
+}): IntegrationSettingsPreference {
+  const read = async (): Promise<IntegrationSettings> => {
+    const raw = await deps.store.read();
+    if (raw === undefined) return {};
+    const parsed = JSON.parse(raw) as {
+      publicOrigin?: string;
+      publicOriginVerifiedAt?: string;
+      webhookVerifyToken?: string;
+      metaAppSecret?: string;
+      webhookConfirmedAt?: string;
+    };
+    return {
+      ...(parsed.publicOrigin !== undefined && {
+        publicOrigin: parsed.publicOrigin,
+      }),
+      ...(parsed.publicOriginVerifiedAt !== undefined && {
+        publicOriginVerifiedAt: parsed.publicOriginVerifiedAt,
+      }),
+      ...(parsed.webhookVerifyToken !== undefined && {
+        webhookVerifyToken: deps.cipher.decrypt(parsed.webhookVerifyToken),
+      }),
+      ...(parsed.metaAppSecret !== undefined && {
+        metaAppSecret: deps.cipher.decrypt(parsed.metaAppSecret),
+      }),
+      ...(parsed.webhookConfirmedAt !== undefined && {
+        webhookConfirmedAt: parsed.webhookConfirmedAt,
+      }),
+    };
+  };
+  return {
+    read,
+    choose: async (change, now) => {
+      if (
+        change.publicOrigin !== undefined &&
+        !validPublicOrigin(change.publicOrigin)
+      ) {
+        throw new Error("invalid_public_origin");
+      }
+      const current = await read();
+      const next = { ...current, ...change };
+      await deps.store.write(
+        JSON.stringify({
+          ...(next.publicOrigin !== undefined && {
+            publicOrigin: next.publicOrigin,
+          }),
+          ...(next.publicOriginVerifiedAt !== undefined && {
+            publicOriginVerifiedAt: next.publicOriginVerifiedAt,
+          }),
+          ...(next.webhookVerifyToken !== undefined && {
+            webhookVerifyToken: deps.cipher.encrypt(next.webhookVerifyToken),
+          }),
+          ...(next.metaAppSecret !== undefined && {
+            metaAppSecret: deps.cipher.encrypt(next.metaAppSecret),
+          }),
+          ...(next.webhookConfirmedAt !== undefined && {
+            webhookConfirmedAt: next.webhookConfirmedAt,
+          }),
+        }),
+        now,
+      );
+      return next;
+    },
+  };
+}
+
+/**
+ * Tests the bucket with a read-only list before persisting.  The supplied
+ * checker is a seam for the fast suite, never a bypass in production.
+ */
+export function createSetupStoragePreference(deps: {
+  readonly store: StorageConfigurationStore;
+  readonly check?: (config: S3AssetConfig) => Promise<S3ConnectionCheck>;
+}): SetupStoragePreference {
+  return {
+    read: () => deps.store.read(),
+    async choose(value, now): Promise<SetupStorageResult> {
+      if (value.driver === "local") {
+        await deps.store.write(value, now);
+        return { ok: true };
+      }
+      if (!validateS3AssetConfiguration(value).ok) {
+        return { ok: false, reason: "invalid_configuration" };
+      }
+      const checked = await (deps.check ?? checkS3Connection)({
+        ...value,
+        publicBaseUrl: "http://localhost",
+      });
+      if (checked.status !== "healthy") {
+        return { ok: false, reason: checked.reason };
+      }
+      await deps.store.write(value, now);
+      return { ok: true };
+    },
+  };
+}
+
+/**
+ * The three states an integration can honestly show.  `pending` means no
+ * configuration has been supplied, not that a test passed; `failure` carries
+ * only a stable code so diagnostics never become a channel for credentials or
+ * provider responses.
+ */
+export type IntegrationHealth = "healthy" | "pending" | "failure";
+
+export interface IntegrationDiagnostic {
+  readonly status: IntegrationHealth;
+  readonly reason?: string;
+}
+
+export interface InstanceIntegrationDiagnostics {
+  readonly meta: IntegrationDiagnostic;
+  readonly storage: IntegrationDiagnostic & {
+    readonly driver: "local" | "r2" | "s3";
+  };
+}
+
+/** Read at request time, so a newly tested configuration is not stale. */
+export interface InstanceIntegrationDiagnosticsReader {
+  read(): Promise<InstanceIntegrationDiagnostics>;
+}
+
+/**
+ * The safe baseline for an installation that has not supplied external
+ * integration credentials. Local assets are available without promising any
+ * backup, while Meta remains deliberately pending until it is configured.
+ */
+export function defaultInstanceIntegrationDiagnostics(): InstanceIntegrationDiagnostics {
+  return {
+    meta: { status: "pending" },
+    storage: { driver: "local", status: "healthy" },
+  };
+}
+
+export function createInitialSetupState(
+  store: InitialSetupStore,
+): InitialSetupState {
+  return {
+    isComplete: async (): Promise<boolean> =>
+      (await store.read()) === "complete",
+    complete: (now: Date): Promise<void> => store.write("complete", now),
+  };
+}
+
+/**
+ * Reads the local key or creates it once.  The exclusive create prevents a
+ * second concurrent starter from replacing a key that already protects data;
+ * an existing key is also tightened to owner-read/write only.
+ */
+export function readOrCreateLocalEncryptionKey(path: string): Buffer {
+  if (existsSync(path)) {
+    const key = readLocalEncryptionKey(path);
+    chmodSync(path, 0o600);
+    return key;
+  }
+
+  const key = randomBytes(LOCAL_ENCRYPTION_KEY_BYTES);
+  try {
+    const descriptor = openSync(path, "wx", 0o600);
+    try {
+      writeFileSync(descriptor, key.toString("base64"), { encoding: "utf8" });
+    } finally {
+      // `writeFileSync` does not close a descriptor it did not open itself.
+      closeSync(descriptor);
+    }
+    return key;
+  } catch (error: unknown) {
+    // Another starter may have won between existsSync and openSync.  Its key is
+    // authoritative, never the random value generated by this caller.
+    if (isAlreadyExists(error)) return readLocalEncryptionKey(path);
+    throw error;
+  }
+}
+
+function readLocalEncryptionKey(path: string): Buffer {
+  const key = Buffer.from(readFileSync(path, "utf8").trim(), "base64");
+  if (key.length !== LOCAL_ENCRYPTION_KEY_BYTES) {
+    throw new Error(`Invalid local encryption key at ${path}`);
+  }
+  return key;
+}
+
+function isAlreadyExists(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "EEXIST"
+  );
+}
 
 /**
  * The shortest deadline that can be honoured, and the reason is mechanical

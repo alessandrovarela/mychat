@@ -9,7 +9,11 @@ import {
 } from "./auth/credential.js";
 import { SESSION_COOKIE_NAME } from "./auth/session.js";
 import { run } from "./cli/main.js";
-import { ConfigError } from "./config/errors.js";
+import {
+  createIntegrationSettingsPreference,
+  LOCAL_ENCRYPTION_KEY_FILE,
+  readOrCreateLocalEncryptionKey,
+} from "./config/instance-settings.js";
 import { ASSETS_ROUTE_PREFIX } from "./http/index.js";
 import { t } from "./i18n/index.js";
 import {
@@ -20,8 +24,10 @@ import type { PlatformRequest, PlatformTransport } from "./platform/index.js";
 import {
   createAuditRepository,
   createCredentialStore,
+  createSecretCipher,
   createDurableWorkStore,
   createPublicationCacheStore,
+  createPreferenceStore,
   MigrationError,
   openDatabase,
   thumbnailKeyFor,
@@ -112,6 +118,33 @@ function inspect(dir: string): DatabaseHandle {
   const handle = openDatabase({ databasePath: join(dir, "mychat.db") });
   handles.push(handle);
   return handle;
+}
+
+function encryptedCredentials(dir: string) {
+  return createCredentialStore(
+    inspect(dir).db,
+    createSecretCipher(
+      readOrCreateLocalEncryptionKey(join(dir, LOCAL_ENCRYPTION_KEY_FILE)),
+    ),
+  );
+}
+
+function encryptedIntegrations(dir: string) {
+  const handle = inspect(dir);
+  return createIntegrationSettingsPreference({
+    store: {
+      read: () => createPreferenceStore(handle.db).read("integrationSettings"),
+      write: (value, now) =>
+        createPreferenceStore(handle.db).write(
+          "integrationSettings",
+          value,
+          now,
+        ),
+    },
+    cipher: createSecretCipher(
+      readOrCreateLocalEncryptionKey(join(dir, LOCAL_ENCRYPTION_KEY_FILE)),
+    ),
+  });
 }
 
 afterEach(async () => {
@@ -359,21 +392,119 @@ describe("REQ-091: one command brings the process up", () => {
   });
 });
 
+describe("REQ-448: legacy environment migration", () => {
+  it("imports legacy webhook values once and preserves a panel replacement", async () => {
+    const dir = tempDir();
+    await boot(baseEnv(dir, { PUBLIC_ORIGIN: "https://first.example.test" }));
+
+    const integrations = encryptedIntegrations(dir);
+    expect(await integrations.read()).toMatchObject({
+      publicOrigin: "https://first.example.test",
+      webhookVerifyToken: VERIFY_TOKEN,
+      metaAppSecret: APP_SECRET,
+    });
+
+    await integrations.choose(
+      {
+        publicOrigin: "https://panel.example.test",
+        webhookVerifyToken: "panel-token",
+        metaAppSecret: "panel-secret",
+      },
+      NOW,
+    );
+    await boot(
+      baseEnv(dir, {
+        PUBLIC_ORIGIN: "https://environment.example.test",
+        META_APP_SECRET: "environment-secret",
+        WEBHOOK_VERIFY_TOKEN: "environment-token",
+      }),
+    );
+
+    expect(await integrations.read()).toMatchObject({
+      publicOrigin: "https://panel.example.test",
+      webhookVerifyToken: "panel-token",
+      metaAppSecret: "panel-secret",
+    });
+  });
+
+  it("keeps generated resource addresses on the imported origin after the environment value is removed", async () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, "assets"), { recursive: true });
+    writeFileSync(join(dir, "assets", "guide.txt"), "the resource", "utf8");
+
+    await boot(baseEnv(dir, { PUBLIC_ORIGIN: "https://legacy.example.test" }));
+    const app = await boot(baseEnv(dir));
+    const db = inspect(dir).db;
+    await setOperatorPassword(
+      "operator-password",
+      createOperatorCredentialStore(db),
+      NOW,
+    );
+
+    const opened = await app.server.inject({
+      method: "POST",
+      url: "/api/session",
+      headers: { "content-type": "application/json" },
+      payload: JSON.stringify({ password: "operator-password" }),
+    });
+    const session = opened.cookies.find(
+      (cookie) => cookie.name === SESSION_COOKIE_NAME,
+    );
+    expect(session).toBeDefined();
+
+    const listed = await app.server.inject({
+      method: "GET",
+      url: "/api/assets",
+      headers: {
+        cookie: `${SESSION_COOKIE_NAME}=${String(session?.value)}`,
+      },
+    });
+
+    expect(listed.statusCode).toBe(200);
+    expect(
+      (listed.json() as { assets: { publicUrl: string }[] }).assets[0]
+        ?.publicUrl,
+    ).toMatch(/^https:\/\/legacy\.example\.test\/assets\/guide\.txt\?cap=/);
+    expect(app.config.publicOrigin).toBe("https://legacy.example.test");
+
+    const replaced = await app.server.inject({
+      method: "POST",
+      url: "/api/instance/configuration",
+      headers: {
+        cookie: `${SESSION_COOKIE_NAME}=${String(session?.value)}`,
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({
+        action: "set_public_origin",
+        publicOrigin: "https://panel.example.test",
+      }),
+    });
+    expect(replaced.statusCode).toBe(200);
+
+    const relisted = await app.server.inject({
+      method: "GET",
+      url: "/api/assets",
+      headers: {
+        cookie: `${SESSION_COOKIE_NAME}=${String(session?.value)}`,
+      },
+    });
+    expect(
+      (relisted.json() as { assets: { publicUrl: string }[] }).assets[0]
+        ?.publicUrl,
+    ).toMatch(/^https:\/\/panel\.example\.test\/assets\/guide\.txt\?cap=/);
+  });
+});
+
 describe("REQ-091: nothing serves in a state it cannot honour", () => {
-  it("refuses to build when a required variable is missing, naming it", async () => {
-    // `createApp` never binds a port, so a rejection here IS the process not
-    // listening: `main.ts` has nothing to listen on.
-    const error: unknown = await createApp(
+  it("builds an unconfigured installation so it can serve the wizard", async () => {
+    const app = await createApp(
       { DATABASE_PATH: join(tempDir(), "mychat.db") },
       { clock },
-    ).catch((cause: unknown) => cause);
+    );
 
-    expect(error).toBeInstanceOf(ConfigError);
-    expect((error as ConfigError).variables).toEqual([
-      "META_APP_SECRET",
-      "WEBHOOK_VERIFY_TOKEN",
-    ]);
-    expect((error as ConfigError).message).toContain("META_APP_SECRET");
+    expect(app.config.metaAppSecret).toBe("");
+    expect(app.config.webhookVerifyToken).toBe("");
+    await app.close();
   });
 
   it("refuses to build when a migration fails, naming the migration", async () => {
@@ -499,7 +630,7 @@ describe("REQ-096: the environment seeds the credential only once", () => {
       }),
     );
 
-    const stored = await createCredentialStore(inspect(dir).db).read();
+    const stored = await encryptedCredentials(dir).read();
 
     expect(stored).toMatchObject({
       authPath: "instagram_login",
@@ -538,7 +669,7 @@ describe("REQ-096: the environment seeds the credential only once", () => {
       }),
     );
 
-    const stored = await createCredentialStore(inspect(dir).db).read();
+    const stored = await encryptedCredentials(dir).read();
 
     expect(stored?.accessToken).toBe(renewedToken);
     expect(stored?.expiresAt).toEqual(renewedExpiry);

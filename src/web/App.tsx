@@ -53,6 +53,7 @@ import { AppShell } from "./shell.js";
  * behind the guard that nothing else in this file has to understand.
  */
 const SESSION_PROBE_ENDPOINT = "/api/instance";
+const ONBOARDING_PROBE_ENDPOINT = "/api/instance/configuration";
 
 /**
  * Whether the instance still recognises the session this browser holds.
@@ -89,6 +90,34 @@ export const httpSessionProbe: SessionProbe = {
   },
 };
 
+export interface OnboardingProbe {
+  isComplete(): Promise<boolean>;
+}
+
+export const httpOnboardingProbe: OnboardingProbe = {
+  isComplete: async (): Promise<boolean> => {
+    try {
+      const response = await fetch(ONBOARDING_PROBE_ENDPOINT);
+      if (!response.ok) return false;
+      const body = (await response.json()) as {
+        onboarding?: { complete?: unknown };
+      };
+      return body.onboarding?.complete === true;
+    } catch {
+      return false;
+    }
+  },
+};
+
+/**
+ * Route tables are injected only by UI tests. Their focused assertions predate
+ * the setup journey, so they opt into a complete journey unless a test is
+ * explicitly exercising the guard.
+ */
+const completeOnboardingProbe: OnboardingProbe = {
+  isComplete: (): Promise<boolean> => Promise.resolve(true),
+};
+
 export interface AppProps {
   /** Injected by tests. The running application always uses the real table. */
   readonly routes?: readonly RouteEntry[];
@@ -108,6 +137,7 @@ export interface AppProps {
    * deep link cannot draw a protected screen after the session has ended.
    */
   readonly probe?: SessionProbe;
+  readonly onboarding?: OnboardingProbe;
 }
 
 /** Trailing slash is not a different screen: `/flows/` and `/flows` are one. */
@@ -126,24 +156,33 @@ export function matchRoute(
   return table.find((route) => normalize(route.path) === wanted);
 }
 
-export function App({
-  routes = registeredRoutes,
-  pathname,
-  session,
-  probe = httpSessionProbe,
-}: AppProps = {}): ReactElement {
+export function App(props: AppProps = {}): ReactElement {
+  const routes = props.routes ?? registeredRoutes;
+  const probe = props.probe ?? httpSessionProbe;
+  const onboarding =
+    props.onboarding ??
+    (props.routes === undefined
+      ? httpOnboardingProbe
+      : completeOnboardingProbe);
+
   // The provider is ABOVE the screen and not inside the shell: the access
   // screen is rendered outside the shell, being the only public one, and it is
   // the screen that most needed a navigator (REQ-146).
   return (
-    <NavigationProvider pathname={pathname}>
-      <Screen routes={routes} session={session} probe={probe} />
+    <NavigationProvider pathname={props.pathname}>
+      <Screen
+        routes={routes}
+        session={props.session}
+        probe={probe}
+        onboarding={onboarding}
+      />
     </NavigationProvider>
   );
 }
 
 interface DoorwayProps {
   readonly probe: SessionProbe;
+  readonly onboarding: OnboardingProbe;
 }
 
 /**
@@ -170,25 +209,29 @@ interface DoorwayProps {
  * as one request takes and never a moment longer, which is a different thing
  * from the blank page this closes: that one had no next step at all.
  */
-function Doorway({ probe }: DoorwayProps): null {
+function Doorway({ probe, onboarding }: DoorwayProps): null {
   const { redirect } = useNavigation();
 
   useEffect(() => {
     let cancelled = false;
 
-    void probe.isOpen().then((open: boolean): void => {
-      // An answer that arrives after the operator has already gone somewhere
-      // else is an answer to a question nobody is asking any more, and acting
-      // on it would drag them off the screen they asked for.
-      if (!cancelled) {
-        redirect(open ? DASHBOARD_ADDRESS : LOGIN_ADDRESS);
-      }
-    });
+    void Promise.all([probe.isOpen(), onboarding.isComplete()]).then(
+      ([open, complete]): void => {
+        // An answer that arrives after the operator has already gone somewhere
+        // else is an answer to a question nobody is asking any more, and acting
+        // on it would drag them off the screen they asked for.
+        if (!cancelled) {
+          redirect(
+            open ? (complete ? DASHBOARD_ADDRESS : "/setup") : LOGIN_ADDRESS,
+          );
+        }
+      },
+    );
 
     return (): void => {
       cancelled = true;
     };
-  }, [probe, redirect]);
+  }, [probe, onboarding, redirect]);
 
   return null;
 }
@@ -197,6 +240,7 @@ interface ScreenProps {
   readonly routes: readonly RouteEntry[];
   readonly session?: SessionClient;
   readonly probe: SessionProbe;
+  readonly onboarding: OnboardingProbe;
 }
 
 interface PrivateScreenProps {
@@ -204,6 +248,7 @@ interface PrivateScreenProps {
   readonly screen: ReactElement;
   readonly session?: SessionClient;
   readonly probe: SessionProbe;
+  readonly onboarding: OnboardingProbe;
 }
 
 /**
@@ -220,40 +265,65 @@ function PrivateScreen({
   screen,
   session,
   probe,
+  onboarding,
 }: PrivateScreenProps): ReactElement | null {
   const { redirect } = useNavigation();
 
   useEffect(() => {
     let cancelled = false;
 
-    void probe.isOpen().then((open: boolean): void => {
-      if (cancelled) return;
+    void Promise.all([probe.isOpen(), onboarding.isComplete()]).then(
+      ([open, complete]): void => {
+        if (cancelled) return;
 
-      if (!open) {
-        redirect(LOGIN_ADDRESS);
-      }
-    });
+        if (!open) {
+          redirect(LOGIN_ADDRESS);
+        } else if (complete && route.path === "/setup") {
+          // A confirmation can arrive while the operator is reading the
+          // checklist. The next render of this route must release them instead
+          // of leaving an all-complete checklist as a dead end.
+          redirect(DASHBOARD_ADDRESS);
+        } else if (
+          !complete &&
+          route.path !== "/instance" &&
+          route.path !== "/setup"
+        ) {
+          redirect("/setup");
+        }
+      },
+    );
 
     return (): void => {
       cancelled = true;
     };
-  }, [probe, redirect, route.path]);
+  }, [probe, onboarding, redirect, route.path]);
 
   return (
-    <AppShell current={route.parent ?? route.path} session={session}>
+    <AppShell
+      current={
+        route.path === "/setup" ? route.path : (route.parent ?? route.path)
+      }
+      session={session}
+      onboardingPending={route.path === "/setup" || route.path === "/instance"}
+    >
       {screen}
     </AppShell>
   );
 }
 
 /** The screen registered for the address the navigation reports. */
-function Screen({ routes, session, probe }: ScreenProps): ReactElement | null {
+function Screen({
+  routes,
+  session,
+  probe,
+  onboarding,
+}: ScreenProps): ReactElement | null {
   const { address } = useNavigation();
 
   const match = matchRoute(routes, address);
 
   if (match === undefined) {
-    return <Doorway probe={probe} />;
+    return <Doorway probe={probe} onboarding={onboarding} />;
   }
 
   const screen = <match.Screen />;
@@ -271,6 +341,7 @@ function Screen({ routes, session, probe }: ScreenProps): ReactElement | null {
       screen={screen}
       session={session}
       probe={probe}
+      onboarding={onboarding}
     />
   );
 }

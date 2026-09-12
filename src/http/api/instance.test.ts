@@ -2,12 +2,15 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Fastify from "fastify";
+import type { FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../app.js";
 import type { App } from "../../app.js";
 import {
   createOperatorCredentialStore,
   setOperatorPassword,
+  verifyOperatorPassword,
 } from "../../auth/credential.js";
 import { SESSION_COOKIE_NAME } from "../../auth/session.js";
 import {
@@ -18,7 +21,12 @@ import {
   MIN_QUESTIONS,
   MIN_WAIT_HOURS,
 } from "../../config/instance-settings.js";
+import { createSetupStoragePreference } from "../../config/instance-settings.js";
+import type { InstanceSettingsPreference } from "../../config/instance-settings.js";
 import { LIMIT_DEFAULTS } from "../../config/limits.js";
+import type { TimeZonePreference } from "../../config/timezone.js";
+import type { LocalePreference } from "../../i18n/preference.js";
+import type { TriggerSwitchPreference } from "../../config/trigger-switches.js";
 import type { ActiveAutomation } from "../../flows/schema.js";
 import {
   createAutomationAggregateRepository,
@@ -29,8 +37,13 @@ import {
 import type { DatabaseHandle } from "../../storage/index.js";
 import {
   INSTANCE_ROUTE,
+  INSTANCE_INTEGRATIONS_ROUTE,
+  INSTANCE_CONFIGURATION_ROUTE,
+  INSTANCE_SETUP_ROUTE,
   INSTANCE_SETTINGS_ROUTE,
   INSTANCE_TRIGGERS_ROUTE,
+  registerInstanceRoutes,
+  registerSetupRoutes,
 } from "./instance.js";
 
 /**
@@ -76,6 +89,7 @@ const clock = { now: (): Date => NOW };
 const dirs: string[] = [];
 const apps: App[] = [];
 const handles: DatabaseHandle[] = [];
+const setupServers: FastifyInstance[] = [];
 
 function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "mychat-instance-"));
@@ -90,9 +104,179 @@ afterEach(async () => {
   for (const handle of handles.splice(0)) {
     handle.close();
   }
+  for (const server of setupServers.splice(0)) {
+    await server.close();
+  }
   for (const dir of dirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+async function setupServer(initiallyComplete = false): Promise<{
+  readonly server: FastifyInstance;
+  readonly credentials: ReturnType<typeof createOperatorCredentialStore>;
+}> {
+  const handle = openDatabase({ databasePath: ":memory:" });
+  handles.push(handle);
+  const credentials = createOperatorCredentialStore(handle.db);
+  let complete = initiallyComplete;
+  const server = Fastify({ logger: false });
+  setupServers.push(server);
+
+  registerInstanceRoutes(
+    server,
+    {} as TimeZonePreference,
+    {} as TriggerSwitchPreference,
+    {} as InstanceSettingsPreference,
+    {
+      state: {
+        isComplete: () => Promise.resolve(complete),
+        complete: () => {
+          complete = true;
+          return Promise.resolve();
+        },
+      },
+      credentials,
+      now: () => NOW,
+    },
+  );
+  await server.ready();
+  return { server, credentials };
+}
+
+describe("REQ-436/REQ-437/REQ-439: secret-safe integration diagnostics", () => {
+  it("reports pending and failed integrations with stable codes only", async () => {
+    const server = Fastify({ logger: false });
+    setupServers.push(server);
+    registerInstanceRoutes(
+      server,
+      {} as TimeZonePreference,
+      {} as TriggerSwitchPreference,
+      {} as InstanceSettingsPreference,
+      undefined,
+      {
+        read: () =>
+          Promise.resolve({
+            meta: { status: "pending" as const },
+            storage: {
+              driver: "r2" as const,
+              status: "failure" as const,
+              reason: "unauthorized",
+            },
+          }),
+      },
+    );
+    await server.ready();
+
+    const response = await server.inject({
+      method: "GET",
+      url: INSTANCE_INTEGRATIONS_ROUTE,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      meta: { status: "pending" },
+      storage: { driver: "r2", status: "failure", reason: "unauthorized" },
+    });
+    expect(response.body).not.toMatch(/token|secret|endpoint|bucket/i);
+  });
+
+  it("does not register a diagnostic route until composition supplies one", async () => {
+    const { server } = await setupServer();
+
+    const response = await server.inject({
+      method: "GET",
+      url: INSTANCE_INTEGRATIONS_ROUTE,
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it("answers the installed server version and fresh pending checks from the composed application", async () => {
+    const reader = await boot(undefined, false);
+    const [configuration, diagnostics] = await Promise.all([
+      reader.app.server.inject({
+        method: "GET",
+        url: INSTANCE_CONFIGURATION_ROUTE,
+        headers: { cookie: reader.cookie },
+      }),
+      reader.app.server.inject({
+        method: "GET",
+        url: INSTANCE_INTEGRATIONS_ROUTE,
+        headers: { cookie: reader.cookie },
+      }),
+    ]);
+
+    expect(configuration.statusCode).toBe(200);
+    expect(configuration.json()).toMatchObject({
+      installedVersion: "development",
+      onboarding: {
+        passwordSet: true,
+        webhookReady: false,
+        complete: false,
+      },
+    });
+    expect(diagnostics.statusCode).toBe(200);
+    expect(diagnostics.json()).toEqual({
+      meta: { status: "pending" },
+      storage: { driver: "local", status: "pending" },
+    });
+  });
+});
+
+describe("REQ-436/REQ-441: first setup is the only public configuration route", () => {
+  it("tests R2 read-only before persisting and never returns its credentials", async () => {
+    const server = Fastify({ logger: false });
+    setupServers.push(server);
+    let complete = false;
+    let stored: unknown;
+    registerSetupRoutes(server, {
+      state: {
+        isComplete: () => Promise.resolve(complete),
+        complete: () => {
+          complete = true;
+          return Promise.resolve();
+        },
+      },
+      credentials: createOperatorCredentialStore(
+        openDatabase({ databasePath: ":memory:" }).db,
+      ),
+      storage: createSetupStoragePreference({
+        store: {
+          read: () => Promise.resolve(undefined),
+          write: (value) => {
+            stored = value;
+            return Promise.resolve();
+          },
+        },
+        check: () => Promise.resolve({ status: "healthy" }),
+      }),
+      now: () => NOW,
+    });
+    await server.ready();
+
+    const response = await server.inject({
+      method: "POST",
+      url: INSTANCE_SETUP_ROUTE,
+      headers: { "content-type": "application/json" },
+      payload: {
+        password: PASSWORD,
+        passwordConfirmation: PASSWORD,
+        storage: {
+          driver: "r2",
+          endpoint: "https://account.r2.cloudflarestorage.com",
+          accessKeyId: "key-id",
+          secretAccessKey: "never-return-this",
+          bucket: "assets",
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ complete: true });
+    expect(response.body).not.toContain("never-return-this");
+    expect(stored).toMatchObject({ driver: "r2", bucket: "assets" });
+  });
 });
 
 interface Reader {
@@ -100,9 +284,291 @@ interface Reader {
   readonly cookie: string;
 }
 
+describe("The private configuration boundary masks stored secrets", () => {
+  it("only persists a replacement after its credential check succeeds", async () => {
+    const handle = openDatabase({ databasePath: ":memory:" });
+    handles.push(handle);
+    const operatorCredentials = createOperatorCredentialStore(handle.db);
+    await setOperatorPassword(PASSWORD, operatorCredentials, NOW);
+    let metaWrites = 0;
+    let storageWrites = 0;
+    const server = Fastify({ logger: false });
+    setupServers.push(server);
+    registerInstanceRoutes(
+      server,
+      {} as TimeZonePreference,
+      {} as TriggerSwitchPreference,
+      {} as InstanceSettingsPreference,
+      undefined,
+      undefined,
+      {
+        operatorCredentials,
+        platformCredentials: {
+          read: () => Promise.resolve(undefined),
+          write: () => {
+            metaWrites += 1;
+            return Promise.resolve();
+          },
+          recordRefresh: () => Promise.resolve(),
+          recordCheck: () => Promise.resolve(),
+          remove: () => Promise.resolve(),
+        },
+        storage: {
+          read: () => Promise.resolve(undefined),
+          write: () => {
+            storageWrites += 1;
+            return Promise.resolve();
+          },
+          remove: () => Promise.resolve(),
+        },
+        integration: {
+          read: () =>
+            Promise.resolve({
+              publicOrigin: "https://panel.example.test",
+              publicOriginVerifiedAt: NOW.toISOString(),
+            }),
+          choose: (value) => Promise.resolve(value),
+        },
+        now: () => NOW,
+        testMeta: () => Promise.resolve({ status: "healthy" }),
+        testStorage: () =>
+          Promise.resolve({ status: "failure", reason: "unauthorized" }),
+      },
+    );
+    await server.ready();
+    const meta = await server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      payload: {
+        action: "replace_meta",
+        authPath: "instagram_login",
+        accountId: "1784",
+        accessToken: "secret",
+      },
+    });
+    expect(meta.json()).toEqual({ ok: true, status: "healthy" });
+    expect(metaWrites).toBe(1);
+    const storage = await server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      payload: {
+        action: "replace_storage",
+        driver: "r2",
+        endpoint: "https://r2.example.test",
+        accessKeyId: "key",
+        secretAccessKey: "secret",
+        bucket: "assets",
+      },
+    });
+    expect(storage.json()).toEqual({
+      ok: false,
+      status: "failure",
+      reason: "unauthorized",
+    });
+    expect(storageWrites).toBe(0);
+  });
+
+  it("tests before saving, replaces and removes integrations without returning secrets", async () => {
+    const reader = await boot(undefined, false);
+    const secret = "meta-token-that-must-not-leak";
+
+    const origin = await reader.app.server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie, "content-type": "application/json" },
+      payload: {
+        action: "set_public_origin",
+        publicOrigin: "https://panel.example.test",
+      },
+    });
+    expect(origin.statusCode).toBe(200);
+    const verified = await reader.app.server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie, "content-type": "application/json" },
+      payload: { action: "test_public_origin" },
+    });
+    expect(verified.json()).toMatchObject({ ok: true });
+
+    const replaced = await reader.app.server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie, "content-type": "application/json" },
+      payload: {
+        action: "replace_meta",
+        authPath: "instagram_login",
+        accountId: "1784",
+        accessToken: secret,
+      },
+    });
+    expect(replaced.statusCode).toBe(200);
+    expect(replaced.body).not.toContain(secret);
+
+    const tested = await reader.app.server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie, "content-type": "application/json" },
+      payload: {
+        action: "test_meta",
+        authPath: "instagram_login",
+        accountId: "1784",
+        accessToken: secret,
+      },
+    });
+    expect(tested.statusCode).toBe(200);
+    expect(tested.body).not.toContain(secret);
+
+    const state = await reader.app.server.inject({
+      method: "GET",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie },
+    });
+    expect(state.json()).toMatchObject({
+      meta: { configured: false },
+      webhookVerifyToken: false,
+    });
+    expect(state.body).not.toContain(secret);
+
+    const removed = await reader.app.server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie, "content-type": "application/json" },
+      payload: { action: "remove_meta" },
+    });
+    expect(removed.statusCode).toBe(200);
+    expect(removed.json()).toEqual({ ok: true });
+  });
+
+  it("updates storage, webhook values and the App Secret without exposing secrets", async () => {
+    const reader = await boot();
+    const token = "webhook-token-that-must-not-leak";
+    const appSecret = "app-secret-that-must-not-leak";
+    const actions = [
+      {
+        action: "set_public_origin",
+        publicOrigin: "https://panel.example.test",
+      },
+      { action: "test_public_origin" },
+      { action: "replace_storage", driver: "local" },
+      { action: "set_webhook_verify_token", webhookVerifyToken: token },
+      { action: "set_meta_app_secret", metaAppSecret: appSecret },
+    ];
+    for (const change of actions) {
+      const response = await reader.app.server.inject({
+        method: "POST",
+        url: INSTANCE_CONFIGURATION_ROUTE,
+        headers: { cookie: reader.cookie, "content-type": "application/json" },
+        payload: change,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.body).not.toContain(token);
+    }
+    const state = await reader.app.server.inject({
+      method: "GET",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie },
+    });
+    expect(state.json()).toMatchObject({
+      storage: { driver: "local", configured: true },
+      publicOrigin: "https://panel.example.test",
+      webhookVerifyToken: true,
+      meta: { appSecretConfigured: true },
+    });
+    expect(state.body).not.toContain(token);
+    expect(state.body).not.toContain(appSecret);
+
+    const removed = await reader.app.server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie, "content-type": "application/json" },
+      payload: { action: "remove_meta_app_secret" },
+    });
+    expect(removed.statusCode).toBe(200);
+    const afterRemoval = await reader.app.server.inject({
+      method: "GET",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie },
+    });
+    expect(afterRemoval.json()).toMatchObject({
+      meta: { appSecretConfigured: false },
+    });
+  });
+
+  it("removes the dependent webhook token with the public origin", async () => {
+    const reader = await boot(undefined, false);
+    const headers = {
+      cookie: reader.cookie,
+      "content-type": "application/json",
+    };
+    for (const payload of [
+      {
+        action: "set_public_origin",
+        publicOrigin: "https://panel.example.test",
+      },
+      { action: "test_public_origin" },
+      { action: "set_webhook_verify_token", webhookVerifyToken: "token" },
+      { action: "remove_public_origin" },
+    ]) {
+      const response = await reader.app.server.inject({
+        method: "POST",
+        url: INSTANCE_CONFIGURATION_ROUTE,
+        headers,
+        payload,
+      });
+      expect(response.statusCode).toBe(200);
+    }
+    const state = await reader.app.server.inject({
+      method: "GET",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie },
+    });
+    expect(state.json()).toMatchObject({ webhookVerifyToken: false });
+    expect(state.json()).not.toHaveProperty("publicOrigin");
+  });
+
+  it("generates a webhook token without persisting or exposing it on reads", async () => {
+    const reader = await boot(undefined, false);
+    await reader.app.server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie, "content-type": "application/json" },
+      payload: {
+        action: "set_public_origin",
+        publicOrigin: "https://panel.example.test",
+      },
+    });
+    await reader.app.server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie, "content-type": "application/json" },
+      payload: { action: "test_public_origin" },
+    });
+    const generated = await reader.app.server.inject({
+      method: "POST",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie, "content-type": "application/json" },
+      payload: { action: "generate_webhook_verify_token" },
+    });
+    expect(generated.statusCode).toBe(200);
+    expect(generated.json()).toMatchObject({
+      ok: true,
+      generatedWebhookVerifyToken: expect.any(String),
+    });
+    const state = await reader.app.server.inject({
+      method: "GET",
+      url: INSTANCE_CONFIGURATION_ROUTE,
+      headers: { cookie: reader.cookie },
+    });
+    expect(state.json()).toMatchObject({ webhookVerifyToken: false });
+    expect(state.body).not.toContain(
+      generated.json().generatedWebhookVerifyToken,
+    );
+  });
+});
+
 /** The application as deployed, plus an operator who can open the panel. */
-function boot(zone?: string): Promise<Reader> {
-  return bootIn(tempDir(), zone);
+function boot(zone?: string, legacyIntegrations = true): Promise<Reader> {
+  return bootIn(tempDir(), zone, legacyIntegrations);
 }
 
 /**
@@ -110,11 +576,19 @@ function boot(zone?: string): Promise<Reader> {
  * is what a restart IS, and it is the only way to prove that a choice outlives
  * the process that stored it.
  */
-async function bootIn(dir: string, zone?: string): Promise<Reader> {
+async function bootIn(
+  dir: string,
+  zone?: string,
+  legacyIntegrations = true,
+): Promise<Reader> {
   const app = await createApp(
     {
-      META_APP_SECRET: APP_SECRET,
-      WEBHOOK_VERIFY_TOKEN: VERIFY_TOKEN,
+      ...(legacyIntegrations
+        ? {
+            META_APP_SECRET: APP_SECRET,
+            WEBHOOK_VERIFY_TOKEN: VERIFY_TOKEN,
+          }
+        : {}),
       DATABASE_PATH: join(dir, "mychat.db"),
       ASSETS_DIR: join(dir, "assets"),
       THUMBNAILS_DIR: join(dir, "thumbs"),
@@ -122,7 +596,13 @@ async function bootIn(dir: string, zone?: string): Promise<Reader> {
       SWEEP_INTERVAL_MS: "60000",
       ...(zone === undefined ? {} : { MYCHAT_TIMEZONE: zone }),
     },
-    { clock },
+    {
+      clock,
+      publicAddressFetch: () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ service: "mychat" }), { status: 200 }),
+        ),
+    },
   );
   apps.push(app);
 
@@ -248,6 +728,143 @@ async function metricsZoneOf(reader: Reader): Promise<string> {
   return response.json<{ metrics: { window: { zone: string } } }>().metrics
     .window.zone;
 }
+
+describe("REQ-437/REQ-441: setup never reveals a stored credential", () => {
+  it("offers and persists the locale and time zone chosen during first setup", async () => {
+    const handle = openDatabase({ databasePath: ":memory:" });
+    handles.push(handle);
+    const server = Fastify({ logger: false });
+    setupServers.push(server);
+    let locale = "en";
+    let timeZone = "UTC";
+    registerSetupRoutes(server, {
+      state: {
+        isComplete: () => Promise.resolve(false),
+        complete: () => Promise.resolve(),
+      },
+      credentials: createOperatorCredentialStore(handle.db),
+      locale: {
+        inForce: () => Promise.resolve({ locale, source: "stored" }),
+        available: () => ["en", "pt-BR"],
+        apply: () => Promise.resolve({ locale, source: "stored" }),
+        choose: (next) => {
+          locale = next;
+          return Promise.resolve({ ok: true, locale: next });
+        },
+      } as LocalePreference,
+      timeZone: {
+        inForce: () => Promise.resolve({ timeZone, source: "stored" as const }),
+        choose: (next) => {
+          timeZone = next;
+          return Promise.resolve({ ok: true, timeZone: next });
+        },
+      },
+      now: () => NOW,
+    });
+    await server.ready();
+
+    const offered = await server.inject({
+      method: "GET",
+      url: INSTANCE_SETUP_ROUTE,
+    });
+    expect(offered.json()).toMatchObject({
+      complete: false,
+      locale: "en",
+      locales: ["en", "pt-BR"],
+      timeZone: "UTC",
+      timeZones: expect.arrayContaining(["UTC"]),
+    });
+
+    const completed = await server.inject({
+      method: "POST",
+      url: INSTANCE_SETUP_ROUTE,
+      payload: {
+        password: PASSWORD,
+        passwordConfirmation: PASSWORD,
+        locale: "pt-BR",
+        timeZone: "America/Toronto",
+      },
+    });
+    expect(completed.statusCode).toBe(200);
+    expect(locale).toBe("pt-BR");
+    expect(timeZone).toBe("America/Toronto");
+  });
+
+  it("completes first setup from a confirmed password and then refuses reuse", async () => {
+    const { server, credentials } = await setupServer();
+
+    const initial = await server.inject({
+      method: "GET",
+      url: INSTANCE_SETUP_ROUTE,
+    });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json()).toEqual({ complete: false });
+
+    const mismatch = await server.inject({
+      method: "POST",
+      url: INSTANCE_SETUP_ROUTE,
+      payload: {
+        password: PASSWORD,
+        passwordConfirmation: "different-password",
+      },
+    });
+    expect(mismatch.statusCode).toBe(422);
+    expect(mismatch.json()).toEqual({
+      error: "password_confirmation_mismatch",
+    });
+
+    const tooShort = await server.inject({
+      method: "POST",
+      url: INSTANCE_SETUP_ROUTE,
+      payload: { password: "123456", passwordConfirmation: "123456" },
+    });
+    expect(tooShort.statusCode).toBe(422);
+    expect(tooShort.json()).toEqual({ error: "too_short" });
+
+    const completed = await server.inject({
+      method: "POST",
+      url: INSTANCE_SETUP_ROUTE,
+      payload: { password: PASSWORD, passwordConfirmation: PASSWORD },
+    });
+    expect(completed.statusCode).toBe(200);
+    // Neither a password nor its derivation can leave the setup boundary.
+    expect(completed.json()).toEqual({ complete: true });
+    await expect(verifyOperatorPassword(PASSWORD, credentials)).resolves.toBe(
+      true,
+    );
+
+    const reused = await server.inject({
+      method: "POST",
+      url: INSTANCE_SETUP_ROUTE,
+      payload: { password: PASSWORD, passwordConfirmation: PASSWORD },
+    });
+    expect(reused.statusCode).toBe(422);
+    expect(reused.json()).toEqual({ error: "setup_already_complete" });
+  });
+
+  it("rejects an inconsistent installation marker without replacing its password", async () => {
+    const { server, credentials } = await setupServer();
+    await setOperatorPassword(PASSWORD, credentials, NOW);
+
+    const missing = await server.inject({
+      method: "POST",
+      url: INSTANCE_SETUP_ROUTE,
+      payload: {
+        password: "changed-password",
+        passwordConfirmation: "changed-password",
+      },
+    });
+    expect(missing.statusCode).toBe(422);
+    expect(missing.json()).toEqual({ error: "setup_already_complete" });
+
+    await expect(verifyOperatorPassword(PASSWORD, credentials)).resolves.toBe(
+      true,
+    );
+    await expect(
+      verifyOperatorPassword("changed-password", credentials),
+    ).resolves.toBe(false);
+  });
+});
 
 describe("REQ-166: the instance says which zone is in force", () => {
   it("answers the zone the environment configured", async () => {

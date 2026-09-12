@@ -228,6 +228,8 @@ export interface AppShellProps {
   readonly session?: SessionClient;
   /** Injected by tests; production reads the authenticated identity endpoint. */
   readonly accountProfile?: AccountProfileClient;
+  /** Restricts navigation while the required connection journey is incomplete. */
+  readonly onboardingPending?: boolean;
 }
 
 /**
@@ -250,6 +252,7 @@ export function AppShell({
   children,
   session = httpSessionClient,
   accountProfile = httpAccountProfileClient,
+  onboardingPending = false,
 }: AppShellProps): ReactElement {
   const { t } = useLocale();
   // Taken from the context rather than received as a property: the rail is one
@@ -457,12 +460,20 @@ export function AppShell({
       }
       current={current}
       onNavigate={goTo}
-      items={[
-        destination("/dashboard", t("nav.dashboard"), "layout-dashboard"),
-        destination("/automations", t("nav.automations"), "zap"),
-        destination("/publications", t("nav.publications"), "image"),
-        destination("/settings", t("nav.settings"), "settings"),
-      ]}
+      items={
+        onboardingPending
+          ? [
+              destination("/setup", t("nav.setup"), "check"),
+              destination("/instance", t("nav.instance"), "database"),
+            ]
+          : [
+              destination("/dashboard", t("nav.dashboard"), "layout-dashboard"),
+              destination("/automations", t("nav.automations"), "zap"),
+              destination("/publications", t("nav.publications"), "image"),
+              destination("/settings", t("nav.settings"), "settings"),
+              destination("/instance", t("nav.instance"), "database"),
+            ]
+      }
       // Under the destinations, which is where the prototype puts the
       // session. A real button and not a link: it does not lead anywhere,
       // it ends something, and Tab reaches it for the same reason it reaches

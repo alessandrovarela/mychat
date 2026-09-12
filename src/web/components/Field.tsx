@@ -112,6 +112,8 @@ interface FieldBase {
   readonly toolbar?: ReactNode;
   /** Pass a Select, TextArea or KeywordField to reuse the label wiring. */
   readonly children?: ReactNode;
+  /** A compact action that belongs beside this input's value, such as Copy. */
+  readonly trailingAction?: ReactNode;
 }
 
 /**
@@ -183,6 +185,7 @@ export function Field({
   mono = false,
   toolbar,
   children,
+  trailingAction,
   // Taken out of `rest` for the reason REQ-198 records in `TextArea`: spread
   // last, a caller's class REPLACED the component's and the control lost
   // `mc-input` (its surface, its border and its tap size) with no error
@@ -232,23 +235,34 @@ export function Field({
         describedBy,
         labelledBy,
         error !== undefined,
-      ) ?? (
-        <input
-          id={id}
-          className={[
-            "mc-input",
-            mono ? "mc-input--mono" : "",
-            error === undefined ? "" : "mc-input--invalid",
-            className,
-          ]
-            .filter(Boolean)
-            .join(" ")}
-          aria-invalid={error === undefined ? undefined : true}
-          aria-labelledby={labelledBy}
-          aria-describedby={describedBy}
-          {...rest}
-        />
-      )}
+      ) ??
+        (() => {
+          const input = (
+            <input
+              id={id}
+              className={[
+                "mc-input",
+                mono ? "mc-input--mono" : "",
+                error === undefined ? "" : "mc-input--invalid",
+                className,
+              ]
+                .filter(Boolean)
+                .join(" ")}
+              aria-invalid={error === undefined ? undefined : true}
+              aria-labelledby={labelledBy}
+              aria-describedby={describedBy}
+              {...rest}
+            />
+          );
+          return trailingAction === undefined ? (
+            input
+          ) : (
+            <div className="mc-copy-value">
+              {input}
+              {trailingAction}
+            </div>
+          );
+        })()}
       {error === undefined ? null : (
         <p className="mc-field__error" id={errorId}>
           <Icon name="circle-alert" size={ICON_SIZE.text} />

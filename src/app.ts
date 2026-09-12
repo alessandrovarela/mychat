@@ -7,7 +7,15 @@ import {
 } from "./auth/index.js";
 import type { EnvConfig } from "./config/env.js";
 import { loadEnvConfig } from "./config/env.js";
-import { createInstanceSettingsPreference } from "./config/instance-settings.js";
+import {
+  createInitialSetupState,
+  createInstanceSettingsPreference,
+  createSetupStoragePreference,
+  createIntegrationSettingsPreference,
+  LOCAL_ENCRYPTION_KEY_FILE,
+  readOrCreateLocalEncryptionKey,
+} from "./config/instance-settings.js";
+import { dirname, join } from "node:path";
 import { loadLimits } from "./config/limits.js";
 import { createTimeZonePreference } from "./config/timezone.js";
 import { createTriggerSwitchPreference } from "./config/trigger-switches.js";
@@ -25,6 +33,7 @@ import {
   createReceivedEventStore,
   registerAccess,
   registerApiRoutes,
+  registerSetupRoutes,
   registerAssetsRoute,
   registerClicksRoute,
   registerStaticRoute,
@@ -40,6 +49,7 @@ import {
   createFetchTransport,
   createFollowLink,
   createInstagramLoginAccount,
+  INSTAGRAM_LOGIN_HOST,
   createFetchThumbnailDownload,
   createPlatformSender,
   createPublicationCatalogue,
@@ -66,6 +76,7 @@ import {
   createContactRepository,
   createConversationStore,
   createCredentialStore,
+  createSecretCipher,
   createDiskAssets,
   createDiskThumbnails,
   deriveAssetCapabilitySecret,
@@ -74,6 +85,8 @@ import {
   createPublicationCacheStore,
   createPublicationAutomationCoverageReader,
   createInstanceSettingsStore,
+  createPreferenceStore,
+  createStorageConfigurationStore,
   createTimeZonePreferenceStore,
   createTriggerSwitchStore,
   createS3Assets,
@@ -116,6 +129,11 @@ export interface AppOptions {
     input: string | URL,
     init?: RequestInit,
   ) => Promise<Response>;
+  /** Injected public-address probe for the deterministic HTTP suite. */
+  readonly publicAddressFetch?: (
+    input: string | URL,
+    init?: RequestInit,
+  ) => Promise<Response>;
   /** Overridden only to prove that a failing migration stops the boot. */
   readonly migrationsFolder?: string;
 }
@@ -136,6 +154,36 @@ interface SeedDeps {
   readonly audit: AuditRepository;
   readonly config: EnvConfig;
   readonly now: Date;
+}
+
+async function seedIntegrationSettings(deps: {
+  readonly settings: ReturnType<typeof createIntegrationSettingsPreference>;
+  readonly config: EnvConfig;
+  readonly now: Date;
+}): Promise<void> {
+  const current = await deps.settings.read();
+  const next = {
+    ...current,
+    ...(current.publicOrigin === undefined &&
+      deps.config.legacyPublicOrigin !== undefined && {
+        publicOrigin: deps.config.legacyPublicOrigin,
+      }),
+    ...(current.webhookVerifyToken === undefined &&
+      deps.config.webhookVerifyToken !== "" && {
+        webhookVerifyToken: deps.config.webhookVerifyToken,
+      }),
+    ...(current.metaAppSecret === undefined &&
+      deps.config.metaAppSecret !== "" && {
+        metaAppSecret: deps.config.metaAppSecret,
+      }),
+  };
+  if (
+    next.publicOrigin !== current.publicOrigin ||
+    next.webhookVerifyToken !== current.webhookVerifyToken ||
+    next.metaAppSecret !== current.metaAppSecret
+  ) {
+    await deps.settings.choose(next, deps.now);
+  }
 }
 
 /**
@@ -225,16 +273,67 @@ export async function createApp(
     const db = handle.db;
 
     const audit = createAuditRepository(db);
-    const credentials = createCredentialStore(db);
+    const cipher = createSecretCipher(
+      readOrCreateLocalEncryptionKey(
+        join(dirname(config.databasePath), LOCAL_ENCRYPTION_KEY_FILE),
+      ),
+    );
+    // Platform tokens are operator-entered secrets too.  The same local key
+    // that protects storage and webhook values must protect them at rest.
+    const credentials = createCredentialStore(db, cipher);
+    const storageConfiguration = createStorageConfigurationStore(db, cipher);
+    const setupState = createInitialSetupState({
+      read: () => createPreferenceStore(db).read("initialSetupComplete"),
+      write: (value, at) =>
+        createPreferenceStore(db).write("initialSetupComplete", value, at),
+    });
+    const setupStorage = createSetupStoragePreference({
+      store: storageConfiguration,
+      ...(options.assetFetch !== undefined && {
+        check: (storage) =>
+          import("./storage/s3-assets.js").then(({ checkS3Connection }) =>
+            checkS3Connection({
+              ...storage,
+              publicBaseUrl: config.publicOrigin,
+              fetch: options.assetFetch,
+            }),
+          ),
+      }),
+    });
+    const integrationSettings = createIntegrationSettingsPreference({
+      store: {
+        read: () => createPreferenceStore(db).read("integrationSettings"),
+        write: (value, at) =>
+          createPreferenceStore(db).write("integrationSettings", value, at),
+      },
+      cipher,
+    });
+    await seedIntegrationSettings({
+      settings: integrationSettings,
+      config,
+      now: now(),
+    });
+    const configuredIntegration = await integrationSettings.read();
+    const runtimeConfig: EnvConfig = {
+      ...config,
+      publicOrigin: configuredIntegration.publicOrigin ?? config.publicOrigin,
+    };
+    const publicOriginInForce = async (): Promise<string> =>
+      (await integrationSettings.read()).publicOrigin ??
+      runtimeConfig.publicOrigin;
+    const publicAssetBaseUrlInForce = async (): Promise<string> =>
+      `${await publicOriginInForce()}${ASSETS_ROUTE_PREFIX}`;
     const work = createDurableWorkStore(db);
 
     const automationAggregates = createAutomationAggregateRepository(db, clock);
     const buttonClicks = createButtonClickStore(db);
-    const clickSecret = deriveClickSigningSecret(config.metaAppSecret);
+    const clickSecret = deriveClickSigningSecret(
+      (await integrationSettings.read()).metaAppSecret ?? config.metaAppSecret,
+    );
     const buttonLinks = createButtonLinkWriter({
       store: buttonClicks,
       secret: clickSecret,
-      publicOrigin: config.publicOrigin,
+      publicOrigin: publicOriginInForce,
     });
 
     // 2b. The language of the instance (REQ-102), before anything says a word:
@@ -291,25 +390,46 @@ export async function createApp(
     // 4. The ports. Every binding hands out a stable MyChat capability; the
     // bucket itself is never an address a recipient can fetch directly.
     const assetCapabilitySecret = deriveAssetCapabilitySecret(
-      config.metaAppSecret,
+      (await integrationSettings.read()).metaAppSecret ?? config.metaAppSecret,
     );
     let assets: AssetCatalogue;
     let assetsDir: string | undefined;
     let temporaryAssetUrl: ((name: string) => Promise<string>) | undefined;
-    if (config.storage.driver === "disk") {
-      assetsDir = config.storage.assetsDir;
-      assets = createDiskAssets({
-        dir: assetsDir,
-        publicBaseUrl: `${config.publicOrigin}${ASSETS_ROUTE_PREFIX}`,
-        assetCapabilitySecret,
-      });
-    } else {
-      const s3Assets = createS3Assets({
+    let configuredStorage = await storageConfiguration.read();
+    // Compatibility seed for installations configured before the wizard. A
+    // persisted row always wins on later boots, so this never leaves two live
+    // sources of truth. New setup writes this same row after its read-only
+    // connection test and does not consult these legacy variables.
+    if (configuredStorage === undefined && config.storage.driver === "s3") {
+      configuredStorage = {
+        driver: "s3",
         endpoint: config.storage.endpoint,
         accessKeyId: config.storage.accessKeyId,
         secretAccessKey: config.storage.secretAccessKey,
         bucket: config.storage.bucket,
-        publicBaseUrl: `${config.publicOrigin}${ASSETS_ROUTE_PREFIX}`,
+      };
+      await storageConfiguration.write(configuredStorage, now());
+    }
+    if (
+      configuredStorage === undefined ||
+      configuredStorage.driver === "local"
+    ) {
+      assetsDir =
+        config.storage.driver === "disk"
+          ? config.storage.assetsDir
+          : "./dev-data/assets";
+      assets = createDiskAssets({
+        dir: assetsDir,
+        publicBaseUrl: publicAssetBaseUrlInForce,
+        assetCapabilitySecret,
+      });
+    } else {
+      const s3Assets = createS3Assets({
+        endpoint: configuredStorage.endpoint,
+        accessKeyId: configuredStorage.accessKeyId,
+        secretAccessKey: configuredStorage.secretAccessKey,
+        bucket: configuredStorage.bucket,
+        publicBaseUrl: publicAssetBaseUrlInForce,
         assetCapabilitySecret,
         ...(options.assetFetch !== undefined && { fetch: options.assetFetch }),
       });
@@ -332,7 +452,7 @@ export async function createApp(
     // against the composed application.
     const thumbnails = createDiskThumbnails({
       dir: thumbnailsDir,
-      publicBaseUrl: config.publicOrigin,
+      publicBaseUrl: publicOriginInForce,
     });
 
     const account = createInstagramLoginAccount({
@@ -406,13 +526,30 @@ export async function createApp(
     // 6. The server. One Fastify instance, with the webhook and the capability
     // route public, and no session in front of either.
     const server = buildWebhookServer({
-      verifyToken: config.webhookVerifyToken,
-      appSecret: config.metaAppSecret,
+      verifyToken: async () =>
+        (await integrationSettings.read()).webhookVerifyToken ??
+        config.webhookVerifyToken,
+      appSecret: async () =>
+        (await integrationSettings.read()).metaAppSecret ??
+        config.metaAppSecret,
       events: createReceivedEventStore(db),
       audit,
       now,
       onEvent: dispatch,
+      onConfirmed: async () => {
+        const current = await integrationSettings.read();
+        if (current.webhookConfirmedAt === undefined) {
+          await integrationSettings.choose(
+            { ...current, webhookConfirmedAt: now().toISOString() },
+            now(),
+          );
+        }
+      },
     });
+
+    // This deliberately small, unauthenticated identity is the endpoint the
+    // operator can verify through the same public HTTPS route Meta will use.
+    server.get("/health", async () => ({ service: "mychat" }));
 
     // Public by design, authenticated by its own HMAC and never by a session.
     // It resolves only an immutable persisted destination and records before
@@ -436,6 +573,17 @@ export async function createApp(
     // is not what a session protects, and these bytes are read by an `<img>`
     // in the grid rather than by a caller of the contract.
     registerThumbnailsRoute(server, { dir: thumbnailsDir });
+
+    // The setup status and its one-time write must be reachable before a
+    // session exists. Every other API route remains in the guarded scope.
+    registerSetupRoutes(server, {
+      state: setupState,
+      credentials: createOperatorCredentialStore(db),
+      storage: setupStorage,
+      locale,
+      timeZone,
+      now,
+    });
 
     // 6b. The operator's lock (REQ-031, REQ-035, REQ-104). Registered on the
     // same instance as the webhook and never in front of it: a route is private
@@ -535,6 +683,119 @@ export async function createApp(
           // dispatcher reads, so what the Settings screen shows is what the
           // next wait is created under: one source, two consumers.
           instanceSettings,
+          configuration: {
+            operatorCredentials: createOperatorCredentialStore(db),
+            platformCredentials: credentials,
+            storage: storageConfiguration,
+            integration: integrationSettings,
+            now,
+            testPublicOrigin: async (origin) => {
+              try {
+                const response = await (options.publicAddressFetch ?? fetch)(
+                  new URL("/health", origin),
+                  {
+                    redirect: "error",
+                    signal: AbortSignal.timeout(8_000),
+                  },
+                );
+                if (!response.ok) {
+                  return { status: "failure" as const, reason: "unreachable" };
+                }
+                const value: unknown = await response.json();
+                return typeof value === "object" &&
+                  value !== null &&
+                  (value as { service?: unknown }).service === "mychat"
+                  ? { status: "healthy" as const }
+                  : {
+                      status: "failure" as const,
+                      reason: "unexpected_response",
+                    };
+              } catch {
+                return { status: "failure" as const, reason: "unreachable" };
+              }
+            },
+            testStorage: async (value) =>
+              import("./storage/s3-assets.js").then(({ checkS3Connection }) =>
+                checkS3Connection({
+                  ...value,
+                  publicBaseUrl: config.publicOrigin,
+                  ...(options.assetFetch !== undefined && {
+                    fetch: options.assetFetch,
+                  }),
+                }),
+              ),
+            testMeta: async (value) => {
+              const response = await transport({
+                method: "GET",
+                host: INSTAGRAM_LOGIN_HOST,
+                path: "/me",
+                query: { fields: "id", access_token: value.accessToken },
+              });
+              return response.status >= 200 && response.status < 300
+                ? { status: "healthy" as const }
+                : { status: "failure" as const, reason: "unreachable" };
+            },
+          },
+          integrations: {
+            read: async () => {
+              const [meta, storage] = await Promise.all([
+                credentials.read(),
+                storageConfiguration.read(),
+              ]);
+              const checkedMeta = async () => {
+                if (meta === undefined) return { status: "pending" as const };
+                try {
+                  const response = await transport({
+                    method: "GET",
+                    host: INSTAGRAM_LOGIN_HOST,
+                    path: "/me",
+                    query: { fields: "id", access_token: meta.accessToken },
+                  });
+                  return response.status >= 200 && response.status < 300
+                    ? { status: "healthy" as const }
+                    : { status: "failure" as const, reason: "unreachable" };
+                } catch {
+                  return { status: "failure" as const, reason: "unreachable" };
+                }
+              };
+              const checkedStorage = async () => {
+                if (storage === undefined)
+                  return {
+                    driver: "local" as const,
+                    status: "pending" as const,
+                  };
+                if (storage.driver === "local")
+                  return {
+                    driver: "local" as const,
+                    status: "healthy" as const,
+                  };
+                try {
+                  const result = await import("./storage/s3-assets.js").then(
+                    ({ checkS3Connection }) =>
+                      checkS3Connection({
+                        ...storage,
+                        publicBaseUrl: config.publicOrigin,
+                        ...(options.assetFetch !== undefined && {
+                          fetch: options.assetFetch,
+                        }),
+                      }),
+                  );
+                  return { driver: storage.driver, ...result };
+                } catch {
+                  return {
+                    driver: storage.driver,
+                    status: "failure" as const,
+                    reason: "unreachable",
+                  };
+                }
+              };
+              const [metaHealth, storageHealth] = await Promise.all([
+                checkedMeta(),
+                checkedStorage(),
+              ]);
+              return { meta: metaHealth, storage: storageHealth };
+            },
+          },
           now,
         });
       },
@@ -599,7 +860,7 @@ export async function createApp(
     const loop = startSweep(sweep, config.sweepIntervalMs);
 
     return {
-      config,
+      config: runtimeConfig,
       migrations: handle.migrations,
       server,
       sweepOnce: (): Promise<SweepReport> => runSweep(sweep),

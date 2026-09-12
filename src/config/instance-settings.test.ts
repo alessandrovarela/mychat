@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { LIMIT_DEFAULTS } from "./limits.js";
 import {
@@ -17,11 +20,16 @@ import {
   MAX_QUESTIONS,
   MIN_QUESTIONS,
   MIN_WAIT_HOURS,
+  createInitialSetupState,
+  createIntegrationSettingsPreference,
+  defaultInstanceIntegrationDiagnostics,
+  readOrCreateLocalEncryptionKey,
 } from "./instance-settings.js";
 import type {
   InstanceSettingsChange,
   InstanceSettingsPreference,
 } from "./instance-settings.js";
+import { createSecretCipher } from "../storage/index.js";
 
 /**
  * Proves REQ-252, REQ-254, REQ-255 and REQ-257: four values that stopped being
@@ -98,6 +106,31 @@ afterEach(async () => {
   // The translator is shared by the whole process: a case that switched the
   // language and left it switched would decide what the NEXT case reads.
   await useLocale(DEFAULT_LOCALE);
+});
+
+describe("REQ-447: integration secrets remain encrypted at rest", () => {
+  it("round-trips the Meta App Secret without leaving it in the preference row", async () => {
+    let row: string | undefined;
+    const secret = "Meta-App-Secret-That-Must-Not-Be-Readable";
+    const settings = createIntegrationSettingsPreference({
+      store: {
+        read: () => Promise.resolve(row),
+        write: (value) => {
+          row = value;
+          return Promise.resolve();
+        },
+      },
+      cipher: createSecretCipher(Buffer.alloc(32, 9)),
+    });
+
+    await settings.choose({ metaAppSecret: secret }, NOW);
+
+    expect(row).toBeDefined();
+    expect(row).not.toContain(secret);
+    await expect(settings.read()).resolves.toMatchObject({
+      metaAppSecret: secret,
+    });
+  });
 });
 
 describe("REQ-252: the deadline is one setting of the instance", () => {
@@ -468,6 +501,56 @@ describe("a write is refused as a whole, or stored as a whole", () => {
       waitHours: 48,
       questions: 2,
       followButtonLabel: "Done",
+    });
+  });
+});
+
+describe("REQ-441: first setup state and local encryption key", () => {
+  const directories: string[] = [];
+
+  afterEach(() => {
+    while (directories.length > 0) {
+      rmSync(directories.pop() ?? "", { recursive: true, force: true });
+    }
+  });
+
+  it("marks initial setup durably and never treats another value as complete", async () => {
+    let value: string | undefined;
+    const state = createInitialSetupState({
+      read: () => Promise.resolve(value),
+      write: (next) => {
+        value = next;
+        return Promise.resolve();
+      },
+    });
+
+    await expect(state.isComplete()).resolves.toBe(false);
+    await state.complete(NOW);
+    await expect(state.isComplete()).resolves.toBe(true);
+
+    value = "not-complete";
+    await expect(state.isComplete()).resolves.toBe(false);
+  });
+
+  it("generates the local key once, keeps it after restart, and restricts its mode", () => {
+    const directory = mkdtempSync(join(tmpdir(), "mychat-key-"));
+    directories.push(directory);
+    const path = join(directory, "secrets.key");
+
+    const first = readOrCreateLocalEncryptionKey(path);
+    const second = readOrCreateLocalEncryptionKey(path);
+
+    expect(first).toHaveLength(32);
+    expect(second.equals(first)).toBe(true);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("REQ-436/REQ-439: integration diagnostic baseline", () => {
+  it("identifies local storage without implying it is a database backup", () => {
+    expect(defaultInstanceIntegrationDiagnostics()).toEqual({
+      meta: { status: "pending" },
+      storage: { driver: "local", status: "healthy" },
     });
   });
 });

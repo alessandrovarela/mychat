@@ -1,8 +1,13 @@
 # Instalação guiada no Ubuntu LTS
 
-Este guia junta os contratos locais da instalação, sem executar comandos na VM
-nem exigir conta Meta, domínio ou provedor. A homologação externa fica na Fase
-4e.
+Este guia junta os contratos locais da instalação, sem exigir um provedor
+específico. Para a implantação humana validada em uma VPS OVHcloud com
+Cloudflare Tunnel, siga também o [guia de configuração da
+OVHcloud](ovhcloud-setup.pt-BR.md). Para a condução por agente, use o
+[playbook operacional](agent-installation-playbook.md).
+
+A homologação externa começou na Fase 4e. A instalação local continua sendo o
+contrato de menor privilégio para desenvolvimento e reprodução de defeitos.
 
 ## Antes de começar
 
@@ -16,9 +21,11 @@ node scripts/install-plan.js arm64
 ```
 
 O plano não acessa a rede, não coleta segredos e só lista os comandos de
-privilégio depois de consentimento explícito. Ele prepara `.env`, gera
-`META_APP_SECRET` e `WEBHOOK_VERIFY_TOKEN` no operador, inicia `docker compose`
-e verifica a saúde com `docker compose ps --status running`.
+privilégio depois de consentimento explícito. Ele prepara `.env` apenas com a
+infraestrutura, inicia `docker compose` e verifica a saúde com `docker compose
+ps --status running`. Depois, abra o MyChat: o wizard define senha, idioma e
+fuso; em Integrações configure Webhook → Meta → armazenamento. Tokens e
+credenciais não pertencem ao `.env` de uma instalação nova.
 
 ## Reexecução segura
 
@@ -45,4 +52,5 @@ use os runbooks [em português](operations.pt-BR.md) ou
 
 Não exponha o processo diretamente nem aplique autenticação ao `/webhook`.
 Domínio, HTTPS público, R2/Litestream e a prova com uma segunda conta Meta são
-atos externos, deliberadamente reservados para a Fase 4e.
+atos externos: mantenha-os separados do ambiente local e registre apenas
+evidência redigida.

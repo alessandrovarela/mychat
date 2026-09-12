@@ -20,8 +20,15 @@ interface ClickRouteDeps {
 }
 
 interface ButtonLinkDeps extends Pick<ClickRouteDeps, "store" | "secret"> {
-  /** Public origin already normalised by the validated environment config. */
-  readonly publicOrigin: string;
+  /** Current public origin; persisted instance settings may change it live. */
+  readonly publicOrigin: string | (() => Promise<string>);
+}
+
+async function publicOriginInForce(
+  source: ButtonLinkDeps["publicOrigin"],
+): Promise<string> {
+  const origin = typeof source === "function" ? await source() : source;
+  return origin.replace(/\/+$/, "");
 }
 
 /** Explicit domain separation when reusing the validated Meta app secret. */
@@ -54,7 +61,7 @@ export function createButtonLinkWriter(deps: ButtonLinkDeps): ButtonLinkWriter {
         });
         wrapped.push({
           ...button,
-          url: `${deps.publicOrigin}${CLICKS_ROUTE_PREFIX}/${String(destination.id)}?${query.toString()}`,
+          url: `${await publicOriginInForce(deps.publicOrigin)}${CLICKS_ROUTE_PREFIX}/${String(destination.id)}?${query.toString()}`,
         });
       }
       return wrapped;

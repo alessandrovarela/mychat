@@ -1,5 +1,8 @@
 import type { FastifyInstance } from "fastify";
-import type { InstanceSettingsPreference } from "../../config/instance-settings.js";
+import type {
+  InstanceIntegrationDiagnosticsReader,
+  InstanceSettingsPreference,
+} from "../../config/instance-settings.js";
 import type { TimeZonePreference } from "../../config/timezone.js";
 import type { TriggerSwitchPreference } from "../../config/trigger-switches.js";
 import type { AutomationAggregateLifecycle } from "../../flows/automations.js";
@@ -20,6 +23,7 @@ import type {
   DashboardStatusReader,
 } from "./dashboard.js";
 import { registerInstanceRoutes } from "./instance.js";
+import type { InstanceConfigurationDeps } from "./instance.js";
 import { registerLocaleRoutes } from "./locale.js";
 import { registerPublicationRoutes } from "./publications.js";
 
@@ -91,6 +95,10 @@ export interface ApiDeps {
    */
   readonly instanceSettings: InstanceSettingsPreference;
   readonly triggerSwitches?: TriggerSwitchPreference;
+  /** Reauthenticated integration settings, never exposed outside private API. */
+  readonly configuration?: InstanceConfigurationDeps;
+  /** A fresh, server-side verification of integrations for Settings. */
+  readonly integrations?: InstanceIntegrationDiagnosticsReader;
   /** Injected so a test asserts an instant instead of racing the machine's. */
   readonly now: () => Date;
 }
@@ -133,6 +141,9 @@ export function registerApiRoutes(scope: FastifyInstance, deps: ApiDeps): void {
       deps.timeZone,
       triggerSwitches,
       deps.instanceSettings,
+      undefined,
+      deps.integrations,
+      deps.configuration,
     );
     registerAssetRoutes(
       api,
@@ -178,7 +189,9 @@ export {
   INSTANCE_ROUTE,
   INSTANCE_SETTINGS_ROUTE,
   INSTANCE_TRIGGERS_ROUTE,
+  INSTANCE_SETUP_ROUTE,
   registerInstanceRoutes,
+  registerSetupRoutes,
 } from "./instance.js";
 
 export { registerAutomationAggregateRoutes } from "./automations.js";

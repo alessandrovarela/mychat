@@ -4,13 +4,9 @@ import { ConfigError, configMessages } from "./errors.js";
 import { DEFAULT_TIME_ZONE, isKnownTimeZone } from "./timezone.js";
 
 /**
- * Credentials and environment configuration. A missing REQUIRED variable must
- * stop the process at startup, in one report naming everything that is absent,
- * instead of surfacing as a broken call in production.
- *
- * The platform token and the account id are deliberately NOT required: a fresh
- * installation has neither, and refusing to start would deny the operator the
- * `status` command that explains what is still missing.
+ * Infrastructure environment configuration and compatibility inputs for an
+ * older installation. A fresh installation needs neither an `.env` file nor a
+ * Meta value: the wizard persists product configuration later.
  *
  * Pure by design: the environment arrives as an argument, `process.env` is
  * never read here, so a test can exercise any environment shape.
@@ -83,16 +79,13 @@ type S3Variable = keyof z.infer<typeof s3Object>;
 const S3_VARIABLES = Object.keys(s3Object.shape) as S3Variable[];
 
 const envShape = {
-  META_APP_SECRET: z.string().min(1),
+  META_APP_SECRET: z.string().min(1).optional(),
   /**
-   * OPTIONAL, unlike the other two: a fresh installation has no token yet, and
-   * the process must start anyway so the operator can ask `status` what is
-   * missing (Phase 1c spec, constraint on `npm run dev`). The other two are
-   * required because the webhook cannot answer the handshake without the verify
-   * token, nor authenticate a delivery without the app secret.
+   * Every Meta value is optional. They are consumed only as a one-time legacy
+   * import; a new instance receives them through the authenticated panel.
    */
   META_ACCESS_TOKEN: z.string().min(1).optional(),
-  WEBHOOK_VERIFY_TOKEN: z.string().min(1),
+  WEBHOOK_VERIFY_TOKEN: z.string().min(1).optional(),
   /**
    * The account's own platform id, the `<ig-id>` of `/<ig-id>/messages`. Also
    * optional, and for the same reason: without it there is no credential to
@@ -282,15 +275,19 @@ export type StorageConfig = {
 );
 
 export interface EnvConfig {
+  /** Empty until legacy import or the encrypted panel configuration exists. */
   readonly metaAppSecret: string;
   /** Absent on a fresh installation: nothing is configured yet. */
   readonly metaAccessToken?: string;
+  /** Empty until legacy import or the encrypted panel configuration exists. */
   readonly webhookVerifyToken: string;
   /** Absent on a fresh installation, like the token it goes with. */
   readonly instagramAccountId?: string;
   readonly port: number;
   /** Public origin, with no trailing slash, so a path can be appended to it. */
   readonly publicOrigin: string;
+  /** Present only when a legacy environment explicitly supplied the origin. */
+  readonly legacyPublicOrigin?: string;
   /** Lifetime assumed for a token seeded from the environment, in milliseconds. */
   readonly tokenLifetimeMs: number;
   /**
@@ -419,16 +416,19 @@ export function loadEnvConfig(env: NodeJS.ProcessEnv): EnvConfig {
   ).replace(/\/+$/, "");
 
   return {
-    metaAppSecret: parsed.META_APP_SECRET,
+    metaAppSecret: parsed.META_APP_SECRET ?? "",
     ...(parsed.META_ACCESS_TOKEN !== undefined && {
       metaAccessToken: parsed.META_ACCESS_TOKEN,
     }),
-    webhookVerifyToken: parsed.WEBHOOK_VERIFY_TOKEN,
+    webhookVerifyToken: parsed.WEBHOOK_VERIFY_TOKEN ?? "",
     ...(parsed.INSTAGRAM_ACCOUNT_ID !== undefined && {
       instagramAccountId: parsed.INSTAGRAM_ACCOUNT_ID,
     }),
     port: parsed.PORT,
     publicOrigin,
+    ...(parsed.PUBLIC_ORIGIN !== undefined && {
+      legacyPublicOrigin: publicOrigin,
+    }),
     tokenLifetimeMs: parsed.TOKEN_LIFETIME_MS,
     timeZone: parsed.MYCHAT_TIMEZONE,
     databasePath: parsed.DATABASE_PATH,

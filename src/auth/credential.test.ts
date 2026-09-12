@@ -10,6 +10,7 @@ import {
   MINIMUM_PASSWORD_LENGTH,
   PASSWORD_ALGORITHM,
   setOperatorPassword,
+  setOperatorPasswordReauthenticated,
   verifyOperatorPassword,
 } from "./credential.js";
 import type { OperatorCredentialStore } from "./credential.js";
@@ -157,6 +158,48 @@ describe("REQ-101: a replacement takes effect without restarting", () => {
     await expect(
       setOperatorPassword(OTHER_PASSWORD, store, NOW),
     ).resolves.toEqual({ ok: true, replaced: true });
+  });
+});
+
+describe("REQ-437/REQ-441: setting a password proves the existing credential first", () => {
+  it("sets the first password without a current password", async () => {
+    await expect(
+      setOperatorPasswordReauthenticated(PASSWORD, undefined, store, NOW),
+    ).resolves.toEqual({ ok: true, replaced: false });
+    await expect(verifyOperatorPassword(PASSWORD, store)).resolves.toBe(true);
+  });
+
+  it("refuses a replacement without the current password and leaves it valid", async () => {
+    await setOperatorPassword(PASSWORD, store, NOW);
+
+    await expect(
+      setOperatorPasswordReauthenticated(OTHER_PASSWORD, undefined, store, NOW),
+    ).resolves.toEqual({ ok: false, reason: "current_password_required" });
+
+    await expect(verifyOperatorPassword(PASSWORD, store)).resolves.toBe(true);
+    await expect(verifyOperatorPassword(OTHER_PASSWORD, store)).resolves.toBe(
+      false,
+    );
+  });
+
+  it("refuses a wrong current password and accepts the exact one", async () => {
+    await setOperatorPassword(PASSWORD, store, NOW);
+
+    await expect(
+      setOperatorPasswordReauthenticated(
+        OTHER_PASSWORD,
+        "not-the-current-password",
+        store,
+        NOW,
+      ),
+    ).resolves.toEqual({ ok: false, reason: "current_password_invalid" });
+
+    await expect(
+      setOperatorPasswordReauthenticated(OTHER_PASSWORD, PASSWORD, store, NOW),
+    ).resolves.toEqual({ ok: true, replaced: true });
+    await expect(verifyOperatorPassword(OTHER_PASSWORD, store)).resolves.toBe(
+      true,
+    );
   });
 });
 

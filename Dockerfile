@@ -33,6 +33,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 FROM node:24-trixie-slim AS runtime
 
 WORKDIR /app
+ARG MYCHAT_VERSION=development
 ENV NODE_ENV=production
 
 COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
@@ -44,6 +45,7 @@ COPY --from=build --chown=node:node /app/build ./build
 COPY --from=build --chown=node:node /app/dist ./build/dist
 COPY --from=build --chown=node:node /app/src/i18n/locales ./build/src/i18n/locales
 COPY --chown=node:node drizzle ./build/drizzle
+RUN printf '%s\n' "$MYCHAT_VERSION" > VERSION
 
 USER node
 EXPOSE 3000

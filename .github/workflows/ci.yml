@@ -26,6 +26,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Verify public distribution tree
+        run: node scripts/public-release.js . "$(mktemp -d)/mychat-public"
+
       - run: npm run lint
 
       - run: npm run build

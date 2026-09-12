@@ -593,6 +593,23 @@ export const instancePreferences = sqliteTable("instance_preferences", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+/**
+ * The one object-storage binding selected during first setup.
+ *
+ * It is a row rather than environment configuration because the operator can
+ * prove and change it through the application.  The only secret column is
+ * encrypted before it reaches SQLite (see `storage-configuration.ts`).
+ */
+export const storageConfiguration = sqliteTable("storage_configuration", {
+  id: text("id").primaryKey(),
+  driver: text("driver").notNull(),
+  endpoint: text("endpoint"),
+  accessKeyId: text("access_key_id"),
+  secretAccessKey: text("secret_access_key"),
+  bucket: text("bucket"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 export type ContactAttributeRow = typeof contactAttributes.$inferSelect;
 export type ContactConversationRow = typeof contactConversations.$inferSelect;
 export type DurableWorkRow = typeof durableWork.$inferSelect;
@@ -609,3 +626,4 @@ export type OperatorCredentialRow = typeof operatorCredential.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
 export type PublicationCacheRow = typeof publicationCache.$inferSelect;
 export type InstancePreferenceRow = typeof instancePreferences.$inferSelect;
+export type StorageConfigurationRow = typeof storageConfiguration.$inferSelect;

@@ -93,6 +93,23 @@ describe("the disk thumbnail binding", () => {
     expect(await thumbnails.has(KEY)).toBe(false);
   });
 
+  it("reads the public origin again when it changes", async () => {
+    let origin = "https://first.example";
+    const current = createDiskThumbnails({
+      dir: directory,
+      publicBaseUrl: () => Promise.resolve(origin),
+    });
+    await current.put(KEY, BODY);
+
+    expect(new URL(await current.publicUrl(KEY)).origin).toBe(
+      "https://first.example",
+    );
+    origin = "https://panel.example";
+    expect(new URL(await current.publicUrl(KEY)).origin).toBe(
+      "https://panel.example",
+    );
+  });
+
   it("does not hold a key it would refuse to write", async () => {
     writeFileSync(join(parent, "escaped.jpg"), BODY.bytes);
 

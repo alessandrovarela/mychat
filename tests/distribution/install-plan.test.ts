@@ -5,9 +5,9 @@ import {
 } from "../../scripts/install-plan.js";
 
 const configuration = {
-  MYCHAT_LOCALE: "pt-BR",
-  MYCHAT_TIMEZONE: "America/Sao_Paulo",
-  PUBLIC_ORIGIN: "https://chat.example.com",
+  PORT: "3000",
+  DATABASE_PATH: "/var/lib/mychat/mychat.db",
+  ASSETS_DIR: "/var/lib/mychat/assets",
 };
 
 describe("REQ-419: deterministic Ubuntu installation plan", () => {
@@ -28,15 +28,15 @@ describe("REQ-419: deterministic Ubuntu installation plan", () => {
     expect(plan.configuration).toEqual({
       destination: ".env",
       entries: [
-        "MYCHAT_LOCALE=pt-BR",
-        "MYCHAT_TIMEZONE=America/Sao_Paulo",
-        "PUBLIC_ORIGIN=https://chat.example.com",
+        "ASSETS_DIR=/var/lib/mychat/assets",
+        "DATABASE_PATH=/var/lib/mychat/mychat.db",
+        "PORT=3000",
       ],
       secretValuesCollected: false,
     });
     expect(plan.secrets).toMatchObject({
-      generatedByOperator: true,
-      keys: ["META_APP_SECRET", "WEBHOOK_VERIFY_TOKEN"],
+      generatedByOperator: false,
+      keys: [],
       values: [],
     });
     expect(JSON.stringify(plan)).not.toContain("real-secret");
@@ -65,17 +65,17 @@ describe("REQ-419: deterministic Ubuntu installation plan", () => {
     expect(approved.prerequisites.commands).toContain("sudo apt-get update");
   });
 
-  it("includes generated-secret, compose startup, health, recovery, and next-guide steps", () => {
+  it("keeps product secrets for the wizard, alongside startup and health steps", () => {
     const plan = createInstallPlan({
       configuration,
       consent: true,
       host: { architecture: "arm64", id: "ubuntu", version: "24.04" },
     });
 
-    expect(plan.secrets.commands).toEqual([
-      "openssl rand -hex 32 # META_APP_SECRET",
-      "openssl rand -hex 32 # WEBHOOK_VERIFY_TOKEN",
-    ]);
+    expect(plan.secrets.commands).toEqual([]);
+    expect(plan.secrets.destination).toBe(
+      "first-setup wizard and Integrations",
+    );
     expect(plan.startup).toMatchObject({
       commands: ["docker compose pull", "docker compose up -d"],
       persistentVolume: "mychat-data",

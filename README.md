@@ -16,17 +16,20 @@ access and space for the persistent `mychat-data` volume.
 1. Download the released `docker-compose.yml` and `.env.example` into a new,
    private directory. Copy `.env.example` to `.env`; never commit or share the
    resulting `.env`.
-2. Generate unique values for `META_APP_SECRET` and `WEBHOOK_VERIFY_TOKEN` on
-   the host, then put the values only in `.env`. Do not paste a token into a
-   shell history, issue tracker, chat, or screenshot.
+2. Keep `.env` for infrastructure only (port and data directories). Do not put
+   Meta credentials, webhook tokens, public addresses, or storage credentials
+   in it for a new installation.
 3. Start the released image with `docker compose up -d`, then check it with
    `docker compose ps --status running`.
-4. Keep `mychat-data`. Do not use `docker compose down -v` unless deleting the
+4. Open MyChat and finish the first wizard. Then configure Webhook → Meta →
+   Storage in Integrations; credentials are encrypted by the instance and never
+   shown again.
+5. Keep `mychat-data`. Do not use `docker compose down -v` unless deleting the
    instance's data is intentional.
 
 For the guided, repeatable local plan see
 [the installation guide](docs/installing.md). The installer preserves an
-existing `.env` and volume on a safe re-run; it asks before replacing a secret.
+existing `.env` and volume on a safe re-run.
 
 ## First automation
 

@@ -97,6 +97,8 @@ const BUNDLED_CATALOGUES: CatalogueSet = ((): CatalogueSet => {
 export interface LocaleContextValue extends LocaleState {
   /** Resolves a catalogue key in the language in force. */
   t(key: string, params?: Record<string, unknown>): string;
+  /** Adopts a language already persisted through another trusted boundary. */
+  apply(locale: string): Promise<void>;
   /** Stores the choice in the instance, then re-renders in it. */
   choose(locale: string): Promise<void>;
   /** True while the last choice could not be stored. */
@@ -120,6 +122,7 @@ const LocaleContext = createContext<LocaleContextValue>({
   locale: detached.current(),
   available: detached.locales(),
   t: detached.t,
+  apply: (): Promise<void> => Promise.resolve(),
   choose: (): Promise<void> => Promise.resolve(),
   failed: false,
   writeUnauthorized: false,
@@ -151,14 +154,19 @@ export function LocaleProvider({
   const [writeUnauthorized, setWriteUnauthorized] = useState(false);
   const live = useRef(true);
 
-  const adopt = useCallback(
-    async (state: LocaleState): Promise<void> => {
-      const applied = await translator.use(state.locale);
+  const apply = useCallback(
+    async (wanted: string): Promise<void> => {
+      const applied = await translator.use(wanted);
       if (live.current) {
         setLocale(applied);
       }
     },
     [translator],
+  );
+
+  const adopt = useCallback(
+    async (state: LocaleState): Promise<void> => apply(state.locale),
+    [apply],
   );
 
   useEffect(() => {
@@ -216,12 +224,13 @@ export function LocaleProvider({
       // previous language.
       t: (key: string, params?: Record<string, unknown>): string =>
         translator.t(key, params),
+      apply,
       choose,
       failed,
       readFailure,
       writeUnauthorized,
     }),
-    [locale, translator, choose, failed, readFailure, writeUnauthorized],
+    [locale, translator, apply, choose, failed, readFailure, writeUnauthorized],
   );
 
   return (

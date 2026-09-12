@@ -55,7 +55,7 @@ export interface S3AssetConfig {
   readonly secretAccessKey: string;
   readonly bucket: string;
   /** The MyChat public asset-route origin, with or without a trailing slash. */
-  readonly publicBaseUrl: string;
+  readonly publicBaseUrl: string | (() => Promise<string>);
   /** Makes the stable MyChat URL a capability instead of a bucket URL. */
   readonly assetCapabilitySecret?: AssetCapabilitySecret;
   /** Injected only by the deterministic integration test. */
@@ -65,6 +65,53 @@ export interface S3AssetConfig {
 }
 
 type S3Fetcher = (input: string | URL, init?: RequestInit) => Promise<Response>;
+
+/**
+ * The minimum shape that can safely reach the S3 adapter.  This is deliberately
+ * separate from creation: a Settings screen can reject an incomplete form
+ * before it tries a provider, and a caller that does test a provider still
+ * never has to write an object merely to prove its credentials.
+ */
+export type S3ConfigurationCheck =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly reason: "invalid_endpoint" | "missing_field";
+    };
+
+export function validateS3AssetConfiguration(
+  config: Pick<
+    S3AssetConfig,
+    "endpoint" | "accessKeyId" | "secretAccessKey" | "bucket"
+  >,
+): S3ConfigurationCheck {
+  if (
+    config.accessKeyId.trim() === "" ||
+    config.secretAccessKey.trim() === "" ||
+    config.bucket.trim() === ""
+  ) {
+    return { ok: false, reason: "missing_field" };
+  }
+
+  try {
+    const endpoint = new URL(config.endpoint);
+    if (endpoint.protocol !== "https:" && endpoint.protocol !== "http:") {
+      return { ok: false, reason: "invalid_endpoint" };
+    }
+  } catch {
+    return { ok: false, reason: "invalid_endpoint" };
+  }
+
+  return { ok: true };
+}
+
+/** A secret-safe result suitable for an operator-facing health indicator. */
+export type S3ConnectionCheck =
+  | { readonly status: "healthy" }
+  | {
+      readonly status: "failure";
+      readonly reason: S3AssetErrorCode | "invalid_configuration";
+    };
 
 const RFC3986_EXTRA = /[!'()*]/g;
 
@@ -148,6 +195,34 @@ function listUrl(config: S3AssetConfig, continuationToken?: string): URL {
     url.searchParams.set("continuation-token", continuationToken);
   }
   return url;
+}
+
+/**
+ * Proves read access with the smallest S3 operation this adapter supports.
+ * Listing the application's own prefix neither creates nor removes data, so a
+ * successful test is useful before credentials are persisted and does not turn
+ * object storage into a backup claim.
+ */
+export async function checkS3Connection(
+  config: S3AssetConfig,
+): Promise<S3ConnectionCheck> {
+  if (!validateS3AssetConfiguration(config).ok) {
+    return { status: "failure", reason: "invalid_configuration" };
+  }
+
+  const fetcher = config.fetch ?? globalThis.fetch;
+  const url = listUrl(config);
+  const signed = signedRequest("GET", url, undefined, config);
+  try {
+    const response = await fetcher(url, {
+      method: "GET",
+      headers: signed.headers,
+    });
+    if (response.ok) return { status: "healthy" };
+    return { status: "failure", reason: statusCodeFor(response) };
+  } catch {
+    return { status: "failure", reason: S3_ERROR_CODES.unavailable };
+  }
 }
 
 /** Encode each URI segment exactly once, as required by SigV4. */
@@ -351,7 +426,6 @@ export interface S3AssetCatalogue extends AssetCatalogue {
 }
 
 export function createS3Assets(config: S3AssetConfig): S3AssetCatalogue {
-  const publicBase = config.publicBaseUrl.replace(/\/+$/, "");
   const fetcher = config.fetch ?? globalThis.fetch;
 
   async function request(
@@ -503,6 +577,10 @@ export function createS3Assets(config: S3AssetConfig): S3AssetCatalogue {
       if (!(await hasObject(name))) {
         throw missingAsset(name);
       }
+      const source = config.publicBaseUrl;
+      const publicBase = (
+        typeof source === "function" ? await source() : source
+      ).replace(/\/+$/, "");
       return config.assetCapabilitySecret === undefined
         ? `${publicBase}/${ASSET_PREFIX}${encodeURIComponent(name)}`
         : assetCapabilityUrl(publicBase, name, config.assetCapabilitySecret);

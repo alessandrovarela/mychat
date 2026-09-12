@@ -7,7 +7,8 @@ import {
 import { DashboardScreen } from "./screens/dashboard.js";
 import { LoginScreen } from "./screens/login.js";
 import { PublicationsScreen } from "./screens/publications.js";
-import { SettingsScreen } from "./screens/settings.js";
+import { SetupChecklistScreen } from "./screens/setup-checklist.js";
+import { InstanceScreen, SettingsScreen } from "./screens/settings.js";
 
 /**
  * The route table of the interface: the one place a screen becomes reachable.
@@ -70,6 +71,12 @@ export interface RouteEntry {
 
 export const routes: readonly RouteEntry[] = [
   { path: "/login", Screen: LoginScreen, public: true },
+  {
+    path: "/setup",
+    Screen: SetupChecklistScreen,
+    rail: false,
+    parent: "/instance",
+  },
   { path: "/automations", Screen: AutomationsScreen },
   {
     // Where a new automation begins (REQ-227): the trigger is chosen here, and
@@ -88,6 +95,7 @@ export const routes: readonly RouteEntry[] = [
   { path: "/publications", Screen: PublicationsScreen },
   { path: "/dashboard", Screen: DashboardScreen },
   { path: "/settings", Screen: SettingsScreen },
+  { path: "/instance", Screen: InstanceScreen },
   {
     // Kept as a reachable alias so bookmarks from before Settings grew beyond
     // language do not become a not-found page (REQ-206).

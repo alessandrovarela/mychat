@@ -78,14 +78,24 @@ function assertSafeRelativePath(path) {
 
 function parseConfig(configPath = defaultConfigPath) {
   const config = JSON.parse(readFileSync(configPath, "utf8"));
-  const { allowedDirectories, allowedFiles, publicRemote, sourceRemote } =
-    config;
+  const {
+    allowedDirectories,
+    allowedFiles,
+    publicRemote,
+    sourceRemote,
+    sourceBranch,
+    sourceRepository,
+    publicRepository,
+  } = config;
 
   if (
     !Array.isArray(allowedDirectories) ||
     !Array.isArray(allowedFiles) ||
     sourceRemote !== "origin" ||
-    publicRemote !== "public"
+    publicRemote !== "public" ||
+    !isRepositoryName(sourceRepository) ||
+    !isRepositoryName(publicRepository) ||
+    !isBranchName(sourceBranch)
   ) {
     throw new Error("public allowlist has an invalid remote or path schema");
   }
@@ -98,6 +108,29 @@ function parseConfig(configPath = defaultConfigPath) {
   }
 
   return config;
+}
+
+function isRepositoryName(value) {
+  return (
+    typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)
+  );
+}
+
+function isBranchName(value) {
+  return (
+    typeof value === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) &&
+    !value.includes("..") &&
+    !value.endsWith("/")
+  );
+}
+
+function repositoryNameOf(remote) {
+  return remote
+    .replace(/\/+$/, "")
+    .replace(/\.git$/, "")
+    .split(/[/:]/)
+    .at(-1);
 }
 
 function isAllowed(path, config) {
@@ -171,6 +204,32 @@ export function assertRemoteTopology(remotes, config) {
   if (!remotes.origin || !remotes.public || remotes.origin === remotes.public) {
     throw new Error(
       "public release requires distinct origin and public remotes",
+    );
+  }
+}
+
+export function assertPublicationContext(context, config = parseConfig()) {
+  assertRemoteTopology(context.remotes, config);
+
+  if (context.branch !== config.sourceBranch) {
+    throw new Error(
+      `public release must start from authorized source branch: ${config.sourceBranch}`,
+    );
+  }
+  if (
+    repositoryNameOf(context.remotes[config.sourceRemote]) !==
+    config.sourceRepository
+  ) {
+    throw new Error(
+      "public release source remote does not match the authorized repository",
+    );
+  }
+  if (
+    repositoryNameOf(context.remotes[config.publicRemote]) !==
+    config.publicRepository
+  ) {
+    throw new Error(
+      "public release destination remote does not match the authorized repository",
     );
   }
 }

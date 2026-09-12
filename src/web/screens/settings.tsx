@@ -4,6 +4,7 @@ import {
   Button,
   Checkbox,
   Chip,
+  ConfirmDialog,
   Field,
   LENGTH_ADVICE_TEXT_KEYS,
   lengthAdvice,
@@ -24,6 +25,7 @@ import { languageName, useLocale } from "../locale.js";
 import { SessionExpiredNotice } from "../session-expired.js";
 import { chooseTheme, readThemeChoice, THEME_CHOICES } from "../theme.js";
 import type { ThemeChoice } from "../theme.js";
+import { timeZoneOptionLabel } from "../time-zone.js";
 
 /**
  * Settings (REQ-102, REQ-183), which is what the language selector became.
@@ -161,6 +163,7 @@ const FORM_WIDTH: CSSProperties = { maxWidth: "var(--measure-form)" };
  * nowhere, and nothing in a running browser says so out loud.
  */
 export const SETTINGS_BLOCKS = {
+  integrations: "settings-integrations",
   language: "settings-language",
   triggers: "settings-triggers",
   conversation: "settings-conversation",
@@ -345,6 +348,103 @@ export const httpInstanceClient: InstanceClient = {
  * -------------------------------------------------------------------------- */
 
 const INSTANCE_SETTINGS_ENDPOINT = `${INSTANCE_ENDPOINT}/settings`;
+const INSTANCE_CONFIGURATION_ENDPOINT = `${INSTANCE_ENDPOINT}/configuration`;
+/** A visible proof that a secret was stored, never a recoverable secret. */
+const MASKED_SECRET_VALUE = "••••••••••••";
+
+export interface ConfigurationState {
+  readonly meta: {
+    readonly configured: boolean;
+    readonly appSecretConfigured: boolean;
+    readonly accountId?: string;
+  };
+  readonly storage: {
+    readonly driver: string;
+    readonly configured: boolean;
+    readonly endpoint?: string;
+    readonly bucket?: string;
+  };
+  readonly publicOrigin?: string;
+  readonly publicOriginVerifiedAt?: string;
+  readonly webhookVerifyToken: boolean;
+  readonly webhookConfirmedAt?: string;
+  readonly installedVersion: string;
+}
+export type IntegrationHealth = "pending" | "healthy" | "failure";
+type ConfigurationRemovalAction =
+  | "remove_meta"
+  | "remove_storage"
+  | "remove_public_origin"
+  | "remove_webhook_verify_token"
+  | "remove_meta_app_secret";
+export interface ConfigurationWriteResult {
+  readonly ok: boolean;
+  readonly status?: IntegrationHealth;
+  readonly reason?: string;
+  readonly generatedWebhookVerifyToken?: string;
+}
+export interface ConfigurationClient {
+  read(): Promise<ConfigurationState>;
+  write(change: Record<string, string>): Promise<ConfigurationWriteResult>;
+}
+export const httpConfigurationClient: ConfigurationClient = {
+  read: async () =>
+    instanceState<ConfigurationState>(
+      await fetch(INSTANCE_CONFIGURATION_ENDPOINT),
+    ),
+  write: async (change): Promise<ConfigurationWriteResult> =>
+    instanceState<ConfigurationWriteResult>(
+      await fetch(INSTANCE_CONFIGURATION_ENDPOINT, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(change),
+      }),
+    ),
+};
+
+export interface IntegrationState {
+  readonly meta: {
+    readonly status: IntegrationHealth;
+    readonly reason?: string;
+  };
+  readonly storage: {
+    readonly driver: string;
+    readonly status: IntegrationHealth;
+    readonly reason?: string;
+  };
+}
+export interface IntegrationClient {
+  read(): Promise<IntegrationState>;
+}
+export const httpIntegrationClient: IntegrationClient = {
+  read: async (): Promise<IntegrationState> =>
+    instanceState<IntegrationState>(
+      await fetch(`${INSTANCE_ENDPOINT}/integrations`),
+    ),
+};
+
+const INTEGRATION_HEALTH_TEXT_KEYS: Readonly<
+  Record<IntegrationHealth, { readonly meta: string; readonly storage: string }>
+> = {
+  pending: {
+    meta: "settings.metaHealthPending",
+    storage: "settings.storageHealthPending",
+  },
+  healthy: {
+    meta: "settings.metaHealthHealthy",
+    storage: "settings.storageHealthHealthy",
+  },
+  failure: {
+    meta: "settings.metaHealthFailure",
+    storage: "settings.storageHealthFailure",
+  },
+};
+
+const INTEGRATION_HEALTH_BADGE_STATES = {
+  pending: "info",
+  healthy: "active",
+  failure: "critical",
+} as const;
 
 /** What a value is allowed to be, as the instance declares it. */
 export interface ConversationLimits {
@@ -752,15 +852,22 @@ function followLabelAdvice(
 }
 
 export interface SettingsScreenProps {
+  /** Application behavior, or the connections that belong to this instance. */
+  readonly view?: "application" | "instance";
   /** Injected by tests. The running interface always talks to the API. */
   readonly instance?: InstanceClient;
   /** Injected by tests. The running interface always talks to the API. */
   readonly conversation?: ConversationClient;
+  readonly configuration?: ConfigurationClient;
+  readonly integrations?: IntegrationClient;
 }
 
 export function SettingsScreen({
+  view = "application",
   instance = httpInstanceClient,
   conversation = httpConversationClient,
+  configuration = httpConfigurationClient,
+  integrations = httpIntegrationClient,
 }: SettingsScreenProps = {}): ReactElement {
   const {
     locale,
@@ -793,6 +900,59 @@ export function SettingsScreen({
   }, [failed]);
 
   const [zone, setZone] = useState<ZoneLoad>({ status: "loading" });
+  const [configurationState, setConfigurationState] = useState<
+    ConfigurationState | undefined
+  >();
+  const [configurationFailure, setConfigurationFailure] = useState(false);
+  const [integrationState, setIntegrationState] = useState<
+    IntegrationState | undefined
+  >();
+  const [integrationFailure, setIntegrationFailure] = useState(false);
+  const [configurationNotice, setConfigurationNotice] = useState<
+    | {
+        readonly nature: "success" | "error";
+        readonly title: string;
+        readonly message: string;
+      }
+    | undefined
+  >(undefined);
+  const [removalAction, setRemovalAction] = useState<
+    ConfigurationRemovalAction | undefined
+  >(undefined);
+  const [publicOrigin, setPublicOrigin] = useState("");
+  const [verifyToken, setVerifyToken] = useState("");
+  /** A token stays readable until this instance confirms it was saved. */
+  const [webhookTokenDraft, setWebhookTokenDraft] = useState(false);
+  const [metaAccountId, setMetaAccountId] = useState("");
+  const [metaAccessToken, setMetaAccessToken] = useState("");
+  const [metaAccessTokenDraft, setMetaAccessTokenDraft] = useState(false);
+  const [metaAppSecret, setMetaAppSecret] = useState("");
+  const [metaAppSecretDraft, setMetaAppSecretDraft] = useState(false);
+  const [storageDriver, setStorageDriver] = useState<"local" | "r2" | "s3">(
+    "local",
+  );
+  const [storageEndpoint, setStorageEndpoint] = useState("");
+  const [storageAccessKeyId, setStorageAccessKeyId] = useState("");
+  const [storageSecretAccessKey, setStorageSecretAccessKey] = useState("");
+  const [storageBucket, setStorageBucket] = useState("");
+  const publicOriginIsSaved =
+    configurationState?.publicOrigin !== undefined &&
+    configurationState.publicOrigin === publicOrigin;
+  const publicOriginVerified =
+    publicOriginIsSaved &&
+    configurationState?.publicOriginVerifiedAt !== undefined;
+  // A saved value is an explicit configuration, not an editable draft. The
+  // matching removal action is the one deliberate way to replace it.
+  const publicOriginLocked = configurationState?.publicOrigin !== undefined;
+  const webhookTokenLocked = configurationState?.webhookVerifyToken === true;
+  const metaAppSecretLocked =
+    configurationState?.meta.appSecretConfigured === true;
+  const metaCredentialsLocked = configurationState?.meta.configured === true;
+  const storageLocked = configurationState?.storage.configured === true;
+  const metaCredentialsEntered =
+    metaAccountId.trim() !== "" &&
+    metaAccessToken.trim() !== "" &&
+    metaAccessToken !== MASKED_SECRET_VALUE;
   /** True while the last zone the operator picked could not be stored. */
   const [zoneNotStored, setZoneNotStored] = useState(false);
   const [triggers, setTriggers] = useState<TriggerLoad>({ status: "loading" });
@@ -861,6 +1021,51 @@ export function SettingsScreen({
     })();
 
     void (async (): Promise<void> => {
+      try {
+        const value = await integrations.read();
+        if (live.current) {
+          setIntegrationState(value);
+          setIntegrationFailure(false);
+        }
+      } catch {
+        if (live.current) setIntegrationFailure(true);
+      }
+    })();
+
+    void (async (): Promise<void> => {
+      try {
+        const value = await configuration.read();
+        if (live.current) {
+          setConfigurationState(value);
+          setVerifyToken(value.webhookVerifyToken ? MASKED_SECRET_VALUE : "");
+          setWebhookTokenDraft(false);
+          setMetaAppSecret(
+            value.meta.appSecretConfigured ? MASKED_SECRET_VALUE : "",
+          );
+          setMetaAppSecretDraft(false);
+          setMetaAccountId(value.meta.accountId ?? "");
+          setMetaAccessToken(value.meta.configured ? MASKED_SECRET_VALUE : "");
+          setMetaAccessTokenDraft(false);
+          setPublicOrigin(
+            value.publicOrigin ??
+              (window.location.protocol === "https:"
+                ? window.location.origin
+                : ""),
+          );
+          setStorageDriver(
+            value.storage.driver === "r2" || value.storage.driver === "s3"
+              ? value.storage.driver
+              : "local",
+          );
+          setStorageEndpoint(value.storage.endpoint ?? "");
+          setStorageBucket(value.storage.bucket ?? "");
+        }
+      } catch {
+        if (live.current) setConfigurationFailure(true);
+      }
+    })();
+
+    void (async (): Promise<void> => {
       if (instance.readTriggers === undefined) return;
       try {
         const value = await instance.readTriggers();
@@ -877,7 +1082,140 @@ export function SettingsScreen({
     return (): void => {
       live.current = false;
     };
-  }, [instance]);
+  }, [instance, configuration, integrations]);
+
+  const writeConfiguration = async (
+    change: Record<string, string> & { readonly action: string },
+  ): Promise<void> => {
+    try {
+      const result = await configuration.write(change);
+      const value = await configuration.read();
+      if (live.current) {
+        setConfigurationState(value);
+        setConfigurationFailure(false);
+        if (change.action === "replace_meta" && result.status !== undefined) {
+          setIntegrationState((current) => ({
+            meta: { status: result.status ?? "pending" },
+            storage: current?.storage ?? {
+              driver: value.storage.driver,
+              status: "pending",
+            },
+          }));
+        }
+        if (change.action === "remove_webhook_verify_token") {
+          setVerifyToken("");
+          setWebhookTokenDraft(false);
+        }
+        if (change.action === "remove_public_origin") {
+          setPublicOrigin("");
+          setVerifyToken("");
+          setWebhookTokenDraft(false);
+        }
+        if (result.generatedWebhookVerifyToken !== undefined) {
+          setVerifyToken(result.generatedWebhookVerifyToken);
+          setWebhookTokenDraft(true);
+        }
+        if (change.action === "set_webhook_verify_token" && result.ok) {
+          setWebhookTokenDraft(false);
+        }
+        if (change.action === "set_meta_app_secret" && result.ok) {
+          setMetaAppSecretDraft(false);
+        }
+        if (change.action === "replace_meta" && result.ok) {
+          setMetaAccessTokenDraft(false);
+        }
+        if (change.action === "remove_meta_app_secret") {
+          setMetaAppSecret("");
+          setMetaAppSecretDraft(false);
+        }
+        if (change.action === "remove_meta") {
+          setMetaAccountId("");
+          setMetaAccessToken("");
+          setMetaAccessTokenDraft(false);
+        }
+        if (change.action === "remove_storage") {
+          setStorageDriver("local");
+          setStorageEndpoint("");
+          setStorageAccessKeyId("");
+          setStorageSecretAccessKey("");
+          setStorageBucket("");
+        }
+        const isMeta = change.action.includes("meta");
+        const isStorage = change.action.endsWith("_storage");
+        const isPublicOrigin = change.action.includes("public_origin");
+        const isTest = change.action.startsWith("test_");
+        const isRemoval = change.action.startsWith("remove_");
+        setConfigurationNotice({
+          nature: result.ok ? "success" : "error",
+          title: result.ok
+            ? isTest
+              ? t("settings.connectionTestSucceededTitle")
+              : isRemoval
+                ? t("settings.configurationRemovedTitle")
+                : t("settings.configurationSavedTitle")
+            : isTest
+              ? t("settings.connectionTestFailedTitle")
+              : t("settings.configurationNotSavedTitle"),
+          message: result.ok
+            ? isTest
+              ? isPublicOrigin
+                ? t("settings.publicOriginTestSucceeded")
+                : isMeta
+                  ? t("settings.metaConnectionTestSucceeded")
+                  : t("settings.storageConnectionTestSucceeded")
+              : isRemoval
+                ? t("settings.configurationRemoved")
+                : isMeta
+                  ? t("settings.metaSavedAndVerified")
+                  : isStorage
+                    ? t("settings.storageSavedAndVerified")
+                    : t("settings.configurationSaved")
+            : isTest
+              ? isPublicOrigin
+                ? t("settings.publicOriginTestFailed")
+                : isMeta
+                  ? t("settings.metaConnectionTestFailed")
+                  : t("settings.storageConnectionTestFailed")
+              : t("settings.configurationNotSaved"),
+        });
+      }
+    } catch {
+      if (live.current) {
+        setConfigurationFailure(true);
+        setConfigurationNotice({
+          nature: "error",
+          title: t("settings.configurationNotSavedTitle"),
+          message: t("settings.configurationNotSaved"),
+        });
+      }
+    }
+  };
+
+  /** Tell the operator whether a value reached the browser clipboard. */
+  const copyConfigurationValue = async (
+    value: string,
+    message: string,
+  ): Promise<void> => {
+    try {
+      if (!("clipboard" in navigator)) throw new Error("clipboard-unavailable");
+      await navigator.clipboard.writeText(value);
+      if (live.current) {
+        setConfigurationNotice({
+          nature: "success",
+          title: t("settings.copySucceededTitle"),
+          message,
+        });
+      }
+    } catch {
+      if (live.current) {
+        setConfigurationNotice({
+          nature: "error",
+          title: t("settings.copyFailedTitle"),
+          message: t("settings.copyFailed"),
+        });
+      }
+    }
+  };
 
   useEffect(() => {
     live.current = true;
@@ -1046,7 +1384,11 @@ export function SettingsScreen({
     <div className="mc-page">
       <div className="mc-page__head">
         <div className="mc-page__titles">
-          <h1>{t("settings.title")}</h1>
+          <h1>
+            {view === "instance"
+              ? t("settings.instanceTitle")
+              : t("settings.title")}
+          </h1>
         </div>
       </div>
 
@@ -1067,286 +1409,837 @@ export function SettingsScreen({
         />
       ) : null}
 
-      {/* The menu of block titles, over the blocks it names (REQ-327). It is
+      {configurationNotice !== undefined ? (
+        <Toast
+          nature={configurationNotice.nature}
+          title={configurationNotice.title}
+          message={configurationNotice.message}
+          dismissLabel={t("toast.dismiss")}
+          onDismiss={(): void => setConfigurationNotice(undefined)}
+        />
+      ) : null}
+
+      {/* The menu of application-setting block titles (REQ-327). It is
           drawn unconditionally because every one of the four sections below is
           drawn unconditionally: a block that failed to READ still stands, with
           its failure inside it, so no entry here can point at nothing. */}
-      <BlockNav
-        label={t("settings.jumpLabel")}
-        blocks={[
-          {
-            id: SETTINGS_BLOCKS.language,
-            title: t("settings.languageTitle"),
-          },
-          { id: SETTINGS_BLOCKS.triggers, title: t("settings.triggersTitle") },
-          {
-            id: SETTINGS_BLOCKS.conversation,
-            title: t("settings.conversationTitle"),
-          },
-          { id: SETTINGS_BLOCKS.theme, title: t("settings.themeTitle") },
-        ]}
-      />
+      {view === "application" ? (
+        <BlockNav
+          label={t("settings.jumpLabel")}
+          blocks={[
+            {
+              id: SETTINGS_BLOCKS.language,
+              title: t("settings.languageTitle"),
+            },
+            {
+              id: SETTINGS_BLOCKS.triggers,
+              title: t("settings.triggersTitle"),
+            },
+            {
+              id: SETTINGS_BLOCKS.conversation,
+              title: t("settings.conversationTitle"),
+            },
+            { id: SETTINGS_BLOCKS.theme, title: t("settings.themeTitle") },
+          ]}
+        />
+      ) : null}
 
-      {/* Language and time zone, in ONE block (REQ-325). The panel's own title
+      {view === "instance" ? (
+        <section
+          className="mc-panel mc-jump-target mc-settings-integrations"
+          id={SETTINGS_BLOCKS.integrations}
+          tabIndex={-1}
+          aria-labelledby={headingIdOf(SETTINGS_BLOCKS.integrations)}
+        >
+          <div className="mc-panel__head">
+            <h2
+              className="mc-panel__title"
+              id={headingIdOf(SETTINGS_BLOCKS.integrations)}
+            >
+              {t("settings.integrationsTitle")}
+            </h2>
+            {configurationState === undefined ? null : (
+              <StatusBadge state="info" mono dot={false}>
+                {configurationState.installedVersion === "development"
+                  ? t("settings.developmentVersion")
+                  : t("settings.installedVersion", {
+                      version: configurationState.installedVersion,
+                    })}
+              </StatusBadge>
+            )}
+          </div>
+          <p className="mc-panel__note">{t("settings.integrationsHint")}</p>
+          {configurationFailure ? (
+            <p className="mc-field__tip">{t("settings.integrationsFailed")}</p>
+          ) : null}
+          {configurationState !== undefined ? (
+            <div className="mc-stack">
+              {integrationFailure ? (
+                <p className="mc-field__tip">
+                  {t("settings.integrationHealthFailed")}
+                </p>
+              ) : null}
+              <section className="mc-settings-subsection" style={{ order: 2 }}>
+                <div className="mc-settings-subsection__head">
+                  <h3>{t("settings.metaSectionTitle")}</h3>
+                  <StatusBadge
+                    state={
+                      !configurationState.meta.configured
+                        ? "neutral"
+                        : integrationState === undefined
+                          ? "info"
+                          : INTEGRATION_HEALTH_BADGE_STATES[
+                              integrationState.meta.status
+                            ]
+                    }
+                    dot={integrationState?.meta.status === "healthy"}
+                  >
+                    {!configurationState.meta.configured
+                      ? t("settings.metaMissing")
+                      : integrationState === undefined
+                        ? t("settings.metaConfigured")
+                        : t(
+                            INTEGRATION_HEALTH_TEXT_KEYS[
+                              integrationState.meta.status
+                            ].meta,
+                          )}
+                  </StatusBadge>
+                </div>
+                <div className="mc-settings-action-group">
+                  <h4>{t("settings.metaAppSecretGroupTitle")}</h4>
+                  <Field
+                    id="settings-meta-app-secret"
+                    type={metaAppSecretDraft ? "text" : "password"}
+                    label={t("settings.metaAppSecretLabel")}
+                    hint={t("settings.secretReplacementHint")}
+                    value={metaAppSecret}
+                    onChange={(event): void => {
+                      setMetaAppSecretDraft(true);
+                      setMetaAppSecret(event.target.value);
+                    }}
+                    disabled={!publicOriginVerified || metaAppSecretLocked}
+                  />
+                  <div className="mc-row">
+                    <Button
+                      variant="primary"
+                      disabled={
+                        !publicOriginVerified ||
+                        metaAppSecretLocked ||
+                        metaAppSecret.trim() === "" ||
+                        metaAppSecret === MASKED_SECRET_VALUE
+                      }
+                      onClick={(): void => {
+                        void writeConfiguration({
+                          action: "set_meta_app_secret",
+                          metaAppSecret,
+                        });
+                      }}
+                    >
+                      {t("settings.saveMetaAppSecret")}
+                    </Button>
+                    <Button
+                      variant="removal"
+                      disabled={
+                        !publicOriginVerified ||
+                        !configurationState.meta.appSecretConfigured
+                      }
+                      onClick={(): void => {
+                        setRemovalAction("remove_meta_app_secret");
+                      }}
+                    >
+                      {t("settings.removeMetaAppSecret")}
+                    </Button>
+                  </div>
+                </div>
+                <div className="mc-settings-action-group">
+                  <h4>{t("settings.metaCredentialsGroupTitle")}</h4>
+                  <p className="mc-field__tip">
+                    {t("settings.metaCredentialsHint")}
+                  </p>
+                  <div className="mc-grid2">
+                    <Field
+                      id="settings-meta-account-id"
+                      label={t("settings.metaAccountIdLabel")}
+                      hint={t("settings.instagramAccountIdHint")}
+                      value={metaAccountId}
+                      onChange={(event): void =>
+                        setMetaAccountId(event.target.value)
+                      }
+                      disabled={!publicOriginVerified || metaCredentialsLocked}
+                    />
+                    <Field
+                      id="settings-meta-access-token"
+                      type={metaAccessTokenDraft ? "text" : "password"}
+                      label={t("settings.metaAccessTokenLabel")}
+                      hint={t("settings.metaAccessTokenHint")}
+                      value={metaAccessToken}
+                      onChange={(event): void => {
+                        setMetaAccessTokenDraft(true);
+                        setMetaAccessToken(event.target.value);
+                      }}
+                      disabled={!publicOriginVerified || metaCredentialsLocked}
+                    />
+                  </div>
+                  <div className="mc-row">
+                    <Button
+                      variant="primary"
+                      disabled={
+                        !publicOriginVerified ||
+                        metaCredentialsLocked ||
+                        !configurationState.meta.appSecretConfigured ||
+                        !metaCredentialsEntered
+                      }
+                      onClick={(): void => {
+                        void writeConfiguration({
+                          action: "replace_meta",
+                          authPath: "instagram_login",
+                          accountId: metaAccountId,
+                          accessToken: metaAccessToken,
+                        });
+                      }}
+                    >
+                      {t("settings.saveMeta")}
+                    </Button>
+                    <Button
+                      variant="removal"
+                      disabled={
+                        !publicOriginVerified ||
+                        !configurationState.meta.configured
+                      }
+                      onClick={(): void => {
+                        setRemovalAction("remove_meta");
+                      }}
+                    >
+                      {t("settings.removeMeta")}
+                    </Button>
+                  </div>
+                </div>
+                {!configurationState.meta.appSecretConfigured ? (
+                  <Notice nature="info" title={t("settings.metaBlockedTitle")}>
+                    {t("settings.metaBlocked")}
+                  </Notice>
+                ) : !configurationState.meta.configured &&
+                  configurationState.webhookConfirmedAt === undefined ? (
+                  <Notice
+                    nature="info"
+                    title={t("settings.metaCredentialsReadyTitle")}
+                  >
+                    {t("settings.metaCredentialsReady")}
+                  </Notice>
+                ) : configurationState.webhookConfirmedAt === undefined ? (
+                  <Notice
+                    nature="info"
+                    title={t("settings.metaAwaitingWebhookTitle")}
+                  >
+                    {t("settings.metaAwaitingWebhook")}
+                  </Notice>
+                ) : null}
+              </section>
+              <section className="mc-settings-subsection" style={{ order: 3 }}>
+                <div className="mc-settings-subsection__head">
+                  <h3>{t("settings.storageSectionTitle")}</h3>
+                  <StatusBadge
+                    state={
+                      !configurationState.storage.configured
+                        ? "neutral"
+                        : integrationState === undefined
+                          ? "info"
+                          : INTEGRATION_HEALTH_BADGE_STATES[
+                              integrationState.storage.status
+                            ]
+                    }
+                    dot={integrationState?.storage.status === "healthy"}
+                  >
+                    {!configurationState.storage.configured
+                      ? t("settings.storageMissing")
+                      : integrationState === undefined
+                        ? t("settings.storageConfigured", {
+                            driver: configurationState.storage.driver,
+                          })
+                        : t(
+                            INTEGRATION_HEALTH_TEXT_KEYS[
+                              integrationState.storage.status
+                            ].storage,
+                            { driver: integrationState.storage.driver },
+                          )}
+                  </StatusBadge>
+                </div>
+                <Field
+                  id="settings-storage-driver"
+                  label={t("settings.storageDriverLabel")}
+                >
+                  <Select
+                    id="settings-storage-driver"
+                    value={storageDriver}
+                    options={[
+                      { value: "local", label: t("settings.storageLocal") },
+                      { value: "r2", label: t("settings.storageR2") },
+                      { value: "s3", label: t("settings.storageS3") },
+                    ]}
+                    onChange={(event): void =>
+                      setStorageDriver(
+                        event.target.value as "local" | "r2" | "s3",
+                      )
+                    }
+                    disabled={!publicOriginVerified || storageLocked}
+                  />
+                </Field>
+                {storageDriver !== "local" ? (
+                  <div className="mc-grid2">
+                    <Field
+                      id="settings-storage-endpoint"
+                      type="url"
+                      label={t("settings.storageEndpointLabel")}
+                      value={storageEndpoint}
+                      onChange={(event): void =>
+                        setStorageEndpoint(event.target.value)
+                      }
+                      disabled={!publicOriginVerified || storageLocked}
+                    />
+                    <Field
+                      id="settings-storage-access-key"
+                      label={t("settings.storageAccessKeyLabel")}
+                      value={storageAccessKeyId}
+                      onChange={(event): void =>
+                        setStorageAccessKeyId(event.target.value)
+                      }
+                      disabled={!publicOriginVerified || storageLocked}
+                    />
+                    <Field
+                      id="settings-storage-secret-key"
+                      type="password"
+                      label={t("settings.storageSecretKeyLabel")}
+                      value={storageSecretAccessKey}
+                      onChange={(event): void =>
+                        setStorageSecretAccessKey(event.target.value)
+                      }
+                      disabled={!publicOriginVerified || storageLocked}
+                    />
+                    <Field
+                      id="settings-storage-bucket"
+                      label={t("settings.storageBucketLabel")}
+                      value={storageBucket}
+                      onChange={(event): void =>
+                        setStorageBucket(event.target.value)
+                      }
+                      disabled={!publicOriginVerified || storageLocked}
+                    />
+                  </div>
+                ) : null}
+                <p className="mc-field__tip">
+                  {t("settings.storageNotBackup")}
+                </p>
+                <div className="mc-row">
+                  <Button
+                    variant="primary"
+                    disabled={!publicOriginVerified || storageLocked}
+                    onClick={(): void => {
+                      void writeConfiguration({
+                        action: "replace_storage",
+                        driver: storageDriver,
+                        endpoint: storageEndpoint,
+                        accessKeyId: storageAccessKeyId,
+                        secretAccessKey: storageSecretAccessKey,
+                        bucket: storageBucket,
+                      });
+                    }}
+                  >
+                    {t("settings.saveStorage")}
+                  </Button>
+                  <Button
+                    disabled={!publicOriginVerified || storageLocked}
+                    onClick={(): void => {
+                      void writeConfiguration({
+                        action: "test_storage",
+                        driver: storageDriver,
+                        endpoint: storageEndpoint,
+                        accessKeyId: storageAccessKeyId,
+                        secretAccessKey: storageSecretAccessKey,
+                        bucket: storageBucket,
+                      });
+                    }}
+                  >
+                    {t("settings.testStorage")}
+                  </Button>
+                  <Button
+                    variant="removal"
+                    disabled={
+                      !publicOriginVerified ||
+                      !configurationState.storage.configured
+                    }
+                    onClick={(): void => {
+                      setRemovalAction("remove_storage");
+                    }}
+                  >
+                    {t("settings.removeStorage")}
+                  </Button>
+                </div>
+              </section>
+              <section className="mc-settings-subsection" style={{ order: 1 }}>
+                <div className="mc-settings-subsection__head">
+                  <h3>{t("settings.webhookSectionTitle")}</h3>
+                  <StatusBadge
+                    state={
+                      configurationState.webhookConfirmedAt !== undefined
+                        ? "active"
+                        : configurationState.publicOrigin !== undefined &&
+                            configurationState.webhookVerifyToken
+                          ? "attention"
+                          : "neutral"
+                    }
+                    dot={configurationState.webhookConfirmedAt !== undefined}
+                  >
+                    {configurationState.webhookConfirmedAt !== undefined
+                      ? t("settings.webhookConfirmed")
+                      : configurationState.publicOrigin !== undefined &&
+                          configurationState.webhookVerifyToken
+                        ? t("settings.webhookAwaitingMeta")
+                        : t("settings.webhookMissing")}
+                  </StatusBadge>
+                </div>
+                <Field
+                  id="settings-public-origin"
+                  type="url"
+                  label={t("settings.publicOriginLabel")}
+                  hint={t("settings.publicOriginHint")}
+                  value={publicOrigin}
+                  onChange={(event): void =>
+                    setPublicOrigin(event.target.value)
+                  }
+                  disabled={publicOriginLocked}
+                />
+                <StatusBadge
+                  state={publicOriginVerified ? "active" : "attention"}
+                  dot={publicOriginVerified}
+                >
+                  {publicOriginVerified
+                    ? t("settings.publicOriginVerified")
+                    : t("settings.publicOriginNotVerified")}
+                </StatusBadge>
+                <div className="mc-row">
+                  <Button
+                    variant="primary"
+                    disabled={
+                      publicOriginLocked ||
+                      publicOrigin.trim() === "" ||
+                      publicOriginIsSaved
+                    }
+                    onClick={(): void => {
+                      void writeConfiguration({
+                        action: "set_public_origin",
+                        publicOrigin,
+                      });
+                    }}
+                  >
+                    {t("settings.savePublicOrigin")}
+                  </Button>
+                  <Button
+                    disabled={!publicOriginIsSaved}
+                    onClick={(): void => {
+                      void writeConfiguration({ action: "test_public_origin" });
+                    }}
+                  >
+                    {t("settings.testPublicOrigin")}
+                  </Button>
+                  <Button
+                    variant="removal"
+                    disabled={configurationState.publicOrigin === undefined}
+                    onClick={(): void => {
+                      setRemovalAction("remove_public_origin");
+                    }}
+                  >
+                    {t("settings.removePublicOrigin")}
+                  </Button>
+                </div>
+                <Field
+                  id="settings-webhook-token"
+                  type={webhookTokenDraft ? "text" : "password"}
+                  label={t("settings.webhookTokenLabel")}
+                  hint={t("settings.webhookTokenHint")}
+                  mono
+                  value={verifyToken}
+                  disabled={!publicOriginVerified || webhookTokenLocked}
+                  onChange={(event): void => {
+                    setWebhookTokenDraft(true);
+                    setVerifyToken(event.target.value);
+                  }}
+                  trailingAction={
+                    <Button
+                      disabled={
+                        !configurationState.webhookVerifyToken ||
+                        verifyToken === MASKED_SECRET_VALUE
+                      }
+                      onClick={(): void => {
+                        void copyConfigurationValue(
+                          verifyToken,
+                          t("settings.webhookTokenCopied"),
+                        );
+                      }}
+                    >
+                      {t("settings.copyWebhookToken")}
+                    </Button>
+                  }
+                />
+                <div className="mc-row">
+                  <Button
+                    disabled={!publicOriginVerified || webhookTokenLocked}
+                    onClick={(): void => {
+                      void writeConfiguration({
+                        action: "generate_webhook_verify_token",
+                      });
+                    }}
+                  >
+                    {t("settings.generateWebhookToken")}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    disabled={
+                      !publicOriginVerified ||
+                      webhookTokenLocked ||
+                      verifyToken.trim() === "" ||
+                      verifyToken === MASKED_SECRET_VALUE
+                    }
+                    onClick={(): void => {
+                      void writeConfiguration({
+                        action: "set_webhook_verify_token",
+                        webhookVerifyToken: verifyToken,
+                      });
+                    }}
+                  >
+                    {t("settings.saveWebhookToken")}
+                  </Button>
+                  <Button
+                    variant="removal"
+                    disabled={
+                      !publicOriginVerified ||
+                      !configurationState.webhookVerifyToken
+                    }
+                    onClick={(): void => {
+                      setRemovalAction("remove_webhook_verify_token");
+                    }}
+                  >
+                    {t("settings.removeWebhookToken")}
+                  </Button>
+                </div>
+                {configurationState.webhookVerifyToken ? (
+                  <>
+                    <p className="mc-field__tip">
+                      {t("settings.metaCallbackHint")}
+                    </p>
+                    <div className="mc-copy-value">
+                      <code>
+                        {`${publicOrigin.endsWith("/") ? publicOrigin.slice(0, -1) : publicOrigin}/webhook`}
+                      </code>
+                      <Button
+                        disabled={configurationState.publicOrigin === undefined}
+                        onClick={(): void => {
+                          const origin = publicOrigin.endsWith("/")
+                            ? publicOrigin.slice(0, -1)
+                            : publicOrigin;
+                          void copyConfigurationValue(
+                            `${origin}/webhook`,
+                            t("settings.webhookCallbackCopied"),
+                          );
+                        }}
+                      >
+                        {t("settings.copyWebhookCallback")}
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+              </section>
+              {removalAction !== undefined ? (
+                <ConfirmDialog
+                  title={t("settings.removeConfigurationTitle")}
+                  consequence={t("settings.removeConfigurationConsequence")}
+                  confirmLabel={t("settings.removeConfigurationConfirm")}
+                  cancelLabel={t("settings.removeConfigurationCancel")}
+                  destructive
+                  onCancel={(): void => setRemovalAction(undefined)}
+                  onConfirm={(): void => {
+                    const action = removalAction;
+
+                    setRemovalAction(undefined);
+                    void writeConfiguration({ action });
+                  }}
+                />
+              ) : null}
+            </div>
+          ) : (
+            <PendingState label={t("settings.integrationsLoading")} />
+          )}
+        </section>
+      ) : null}
+
+      {view === "application" ? (
+        <>
+          {/* Language and time zone, in ONE block (REQ-325). The panel's own title
           names both, so nothing inside it needs a second heading to say which
           half a control belongs to. */}
-      <section
-        className="mc-panel mc-jump-target"
-        style={FORM_WIDTH}
-        id={SETTINGS_BLOCKS.language}
-        tabIndex={-1}
-        aria-labelledby={headingIdOf(SETTINGS_BLOCKS.language)}
-      >
-        <div className="mc-panel__head">
-          <h2
-            className="mc-panel__title"
-            id={headingIdOf(SETTINGS_BLOCKS.language)}
+          <section
+            className="mc-panel mc-jump-target"
+            style={FORM_WIDTH}
+            id={SETTINGS_BLOCKS.language}
+            tabIndex={-1}
+            aria-labelledby={headingIdOf(SETTINGS_BLOCKS.language)}
           >
-            {t("settings.languageTitle")}
-          </h2>
-        </div>
+            <div className="mc-panel__head">
+              <h2
+                className="mc-panel__title"
+                id={headingIdOf(SETTINGS_BLOCKS.language)}
+              >
+                {t("settings.languageTitle")}
+              </h2>
+            </div>
 
-        {/* Where the sentence about the language now lives. It was the LEAD of
+            {/* Where the sentence about the language now lives. It was the LEAD of
             the whole screen, from when the whole screen was the language
             selector, so a page holding eleven settings opened with a paragraph
             about one of them. Nothing was taken out: it is the note of the
             block it was always about (REQ-323 keeps it). */}
-        <p className="mc-panel__note">{t("settings.languageHint")}</p>
+            <p className="mc-panel__note">{t("settings.languageHint")}</p>
 
-        <Field id={languageFieldId} label={t("settings.languageLabel")}>
-          <Select
-            id={languageFieldId}
-            value={locale}
-            options={available.map((code) => ({
-              value: code,
-              label: languageName(code),
-            }))}
-            onChange={(event): void => {
-              void choose(event.target.value);
-            }}
-          />
-        </Field>
+            <Field id={languageFieldId} label={t("settings.languageLabel")}>
+              <Select
+                id={languageFieldId}
+                value={locale}
+                options={available.map((code) => ({
+                  value: code,
+                  label: languageName(code),
+                }))}
+                onChange={(event): void => {
+                  void choose(event.target.value);
+                }}
+              />
+            </Field>
 
-        {/* The control still holds the zone that is really in force (REQ-115),
+            {/* The control still holds the zone that is really in force (REQ-115),
             so what changed is only that the write did not happen, and that is
             an answer rather than a state of the panel (REQ-312). */}
-        {zoneNotStored ? (
-          <Toast
-            nature="error"
-            title={t("settings.timezoneNotStoredTitle")}
-            message={t("settings.timezoneNotStored")}
-            dismissLabel={t("toast.dismiss")}
-            onDismiss={(): void => setZoneNotStored(false)}
-          />
-        ) : null}
+            {zoneNotStored ? (
+              <Toast
+                nature="error"
+                title={t("settings.timezoneNotStoredTitle")}
+                message={t("settings.timezoneNotStored")}
+                dismissLabel={t("toast.dismiss")}
+                onDismiss={(): void => setZoneNotStored(false)}
+              />
+            ) : null}
 
-        {/* The options are identifiers the instance answered with, not words:
+            {/* The options are identifiers the instance answered with, not words:
             `America/Sao_Paulo` names itself in every language, and a catalogue
             of names for zones could never keep up with the runtime's own list.
             The selected one is the control's value, so what is in force is
             announced by the platform rather than drawn by us. */}
-        {zone.status === "ready" ? (
-          <Field id={zoneFieldId} label={t("settings.timezoneLabel")}>
-            <Select
-              id={zoneFieldId}
-              value={zone.timeZone}
-              options={zone.timeZones.map((code) => ({
-                value: code,
-                label: code,
-              }))}
-              onChange={(event): void => {
-                void chooseZone(event.target.value);
-              }}
-            />
-          </Field>
-        ) : null}
+            {zone.status === "ready" ? (
+              <Field id={zoneFieldId} label={t("settings.timezoneLabel")}>
+                <Select
+                  id={zoneFieldId}
+                  value={zone.timeZone}
+                  options={zone.timeZones.map((code) => ({
+                    value: code,
+                    label: timeZoneOptionLabel(code),
+                  }))}
+                  onChange={(event): void => {
+                    void chooseZone(event.target.value);
+                  }}
+                />
+              </Field>
+            ) : null}
 
-        {zone.status === "loading" ? (
-          <PendingState label={t("settings.timezoneLoading")} />
-        ) : null}
+            {zone.status === "loading" ? (
+              <PendingState label={t("settings.timezoneLoading")} />
+            ) : null}
 
-        {zone.status === "failed" ? (
-          <Notice nature="error" title={t("settings.timezoneFailedTitle")}>
-            {t("settings.timezoneFailed")}
-          </Notice>
-        ) : null}
-      </section>
+            {zone.status === "failed" ? (
+              <Notice nature="error" title={t("settings.timezoneFailedTitle")}>
+                {t("settings.timezoneFailed")}
+              </Notice>
+            ) : null}
+          </section>
 
-      <section
-        className="mc-panel mc-jump-target"
-        style={FORM_WIDTH}
-        id={SETTINGS_BLOCKS.triggers}
-        tabIndex={-1}
-        aria-labelledby={headingIdOf(SETTINGS_BLOCKS.triggers)}
-      >
-        <div className="mc-panel__head">
-          <h2
-            className="mc-panel__title"
-            id={headingIdOf(SETTINGS_BLOCKS.triggers)}
+          <section
+            className="mc-panel mc-jump-target"
+            style={FORM_WIDTH}
+            id={SETTINGS_BLOCKS.triggers}
+            tabIndex={-1}
+            aria-labelledby={headingIdOf(SETTINGS_BLOCKS.triggers)}
           >
-            {t("settings.triggersTitle")}
-          </h2>
-        </div>
-        <p className="mc-panel__note">{t("settings.triggersHint")}</p>
+            <div className="mc-panel__head">
+              <h2
+                className="mc-panel__title"
+                id={headingIdOf(SETTINGS_BLOCKS.triggers)}
+              >
+                {t("settings.triggersTitle")}
+              </h2>
+            </div>
+            <p className="mc-panel__note">{t("settings.triggersHint")}</p>
 
-        {/* The answer to a switch, and the switch still holds what is really in
+            {/* The answer to a switch, and the switch still holds what is really in
             force, so there is nothing on the panel this has to sit next to
             (REQ-312). The read that FAILED, below, is a standing condition of
             the panel and stays a box. */}
-        {triggerNotStored ? (
-          <Toast
-            nature="error"
-            title={t("settings.triggersNotStoredTitle")}
-            message={t("settings.triggersNotStored")}
-            dismissLabel={t("toast.dismiss")}
-            onDismiss={(): void => setTriggerNotStored(false)}
-          />
-        ) : null}
+            {triggerNotStored ? (
+              <Toast
+                nature="error"
+                title={t("settings.triggersNotStoredTitle")}
+                message={t("settings.triggersNotStored")}
+                dismissLabel={t("toast.dismiss")}
+                onDismiss={(): void => setTriggerNotStored(false)}
+              />
+            ) : null}
 
-        {triggers.status === "loading" ? (
-          <PendingState label={t("settings.triggersLoading")} />
-        ) : null}
-        {triggers.status === "failed" ? (
-          <Notice nature="error" title={t("settings.triggersFailedTitle")}>
-            {t("settings.triggersFailed")}
-          </Notice>
-        ) : null}
-        {triggers.status === "ready" ? (
-          <div className="mc-stack">
-            <TriggerSwitch
-              id={allTriggerId}
-              label={t("settings.triggerAll")}
-              hint={t("settings.triggerAllHint")}
-              checked={everythingDisabled}
-              onCheck={(value): void => {
-                void chooseTrigger("all", !value);
-              }}
-            />
-            <TriggerSwitch
-              id={commentsTriggerId}
-              label={t("settings.triggerComments")}
-              hint={
-                everythingDisabled
-                  ? t("settings.triggerDisabledByAll")
-                  : undefined
-              }
-              checked={!everythingDisabled && triggers.value.comments.enabled}
-              disabled={everythingDisabled}
-              onCheck={(value): void => {
-                void chooseTrigger("comments", value);
-              }}
-            />
-            <TriggerSwitch
-              id={messagesTriggerId}
-              label={t("settings.triggerDirectMessages")}
-              hint={
-                everythingDisabled
-                  ? t("settings.triggerDisabledByAll")
-                  : undefined
-              }
-              checked={
-                !everythingDisabled && triggers.value.directMessages.enabled
-              }
-              disabled={everythingDisabled}
-              onCheck={(value): void => {
-                void chooseTrigger("directMessages", value);
-              }}
-            />
-          </div>
-        ) : null}
-      </section>
+            {triggers.status === "loading" ? (
+              <PendingState label={t("settings.triggersLoading")} />
+            ) : null}
+            {triggers.status === "failed" ? (
+              <Notice nature="error" title={t("settings.triggersFailedTitle")}>
+                {t("settings.triggersFailed")}
+              </Notice>
+            ) : null}
+            {triggers.status === "ready" ? (
+              <div className="mc-stack">
+                <TriggerSwitch
+                  id={allTriggerId}
+                  label={t("settings.triggerAll")}
+                  hint={t("settings.triggerAllHint")}
+                  checked={everythingDisabled}
+                  onCheck={(value): void => {
+                    void chooseTrigger("all", !value);
+                  }}
+                />
+                <TriggerSwitch
+                  id={commentsTriggerId}
+                  label={t("settings.triggerComments")}
+                  hint={
+                    everythingDisabled
+                      ? t("settings.triggerDisabledByAll")
+                      : undefined
+                  }
+                  checked={
+                    !everythingDisabled && triggers.value.comments.enabled
+                  }
+                  disabled={everythingDisabled}
+                  onCheck={(value): void => {
+                    void chooseTrigger("comments", value);
+                  }}
+                />
+                <TriggerSwitch
+                  id={messagesTriggerId}
+                  label={t("settings.triggerDirectMessages")}
+                  hint={
+                    everythingDisabled
+                      ? t("settings.triggerDisabledByAll")
+                      : undefined
+                  }
+                  checked={
+                    !everythingDisabled && triggers.value.directMessages.enabled
+                  }
+                  disabled={everythingDisabled}
+                  onCheck={(value): void => {
+                    void chooseTrigger("directMessages", value);
+                  }}
+                />
+              </div>
+            ) : null}
+          </section>
 
-      {/* The four settings of the automatic conversation, as ONE group: they
+          {/* The four settings of the automatic conversation, as ONE group: they
         are a single decision about how the conversation behaves, and the
         heading over them is what says the three panels below belong together
         rather than being three more preferences of the panel. */}
-      <section
-        className="mc-stack mc-jump-target"
-        style={FORM_WIDTH}
-        id={SETTINGS_BLOCKS.conversation}
-        tabIndex={-1}
-        aria-labelledby={headingIdOf(SETTINGS_BLOCKS.conversation)}
-      >
-        <div className="mc-page__titles">
-          <h2 id={headingIdOf(SETTINGS_BLOCKS.conversation)}>
-            {t("settings.conversationTitle")}
-          </h2>
-        </div>
+          <section
+            className="mc-stack mc-jump-target"
+            style={FORM_WIDTH}
+            id={SETTINGS_BLOCKS.conversation}
+            tabIndex={-1}
+            aria-labelledby={headingIdOf(SETTINGS_BLOCKS.conversation)}
+          >
+            <div className="mc-page__titles">
+              <h2 id={headingIdOf(SETTINGS_BLOCKS.conversation)}>
+                {t("settings.conversationTitle")}
+              </h2>
+            </div>
 
-        {settings.status === "loading" ? (
-          <PendingState label={t("settings.conversationLoading")} />
-        ) : null}
+            {settings.status === "loading" ? (
+              <PendingState label={t("settings.conversationLoading")} />
+            ) : null}
 
-        {settings.status === "failed" ? (
-          <Notice nature="error" title={t("settings.conversationFailedTitle")}>
-            {t("settings.conversationFailed")}
-          </Notice>
-        ) : null}
+            {settings.status === "failed" ? (
+              <Notice
+                nature="error"
+                title={t("settings.conversationFailedTitle")}
+              >
+                {t("settings.conversationFailed")}
+              </Notice>
+            ) : null}
 
-        {settings.status === "ready" && draft !== undefined ? (
-          <>
-            <div className="mc-panel">
-              <div className="mc-panel__head">
-                <h3>{t("settings.waitTitle")}</h3>
-                {/* Repeated over every one of the three, because the operator
+            {settings.status === "ready" && draft !== undefined ? (
+              <>
+                <div className="mc-panel">
+                  <div className="mc-panel__head">
+                    <h3>{t("settings.waitTitle")}</h3>
+                    {/* Repeated over every one of the three, because the operator
                   must never have to wonder whether a value belongs to one
                   automation: there is no deadline of this automation and no
                   goodbye of that one. */}
-                <StatusBadge state="info" dot={false}>
-                  {t("settings.conversationScope")}
-                </StatusBadge>
-              </div>
+                    <StatusBadge state="info" dot={false}>
+                      {t("settings.conversationScope")}
+                    </StatusBadge>
+                  </div>
 
-              <Field
-                id={waitFieldId}
-                type="number"
-                inputMode="numeric"
-                className="mc-input--narrow"
-                label={t("settings.waitLabel")}
-                tip={t("settings.waitTip")}
-                // The bounds are the instance's own, carried in the answer:
-                // nothing here writes 168 down a second time, so the day the
-                // rule moves the field moves with it.
-                min={settings.stored.limits.waitHoursMin}
-                max={settings.stored.limits.waitHoursMax}
-                hint={hintWithEcho(
-                  t("settings.waitHint", {
-                    min: settings.stored.limits.waitHoursMin,
-                    max: settings.stored.limits.waitHoursMax,
-                  }),
-                  waitEcho(numberFrom(draft.waitHours), t),
-                )}
-                error={refusalOf("waitHours")}
-                value={draft.waitHours}
-                onChange={(event): void => {
-                  setDraft({ ...draft, waitHours: event.target.value });
-                }}
-              />
+                  <Field
+                    id={waitFieldId}
+                    type="number"
+                    inputMode="numeric"
+                    className="mc-input--narrow"
+                    label={t("settings.waitLabel")}
+                    tip={t("settings.waitTip")}
+                    // The bounds are the instance's own, carried in the answer:
+                    // nothing here writes 168 down a second time, so the day the
+                    // rule moves the field moves with it.
+                    min={settings.stored.limits.waitHoursMin}
+                    max={settings.stored.limits.waitHoursMax}
+                    hint={hintWithEcho(
+                      t("settings.waitHint", {
+                        min: settings.stored.limits.waitHoursMin,
+                        max: settings.stored.limits.waitHoursMax,
+                      }),
+                      waitEcho(numberFrom(draft.waitHours), t),
+                    )}
+                    error={refusalOf("waitHours")}
+                    value={draft.waitHours}
+                    onChange={(event): void => {
+                      setDraft({ ...draft, waitHours: event.target.value });
+                    }}
+                  />
 
-              <div className="mc-field">
-                <span className="mc-field__label" id={waitScopeId}>
-                  {t("settings.waitScopeLabel")}
-                </span>
-                <p className="mc-field__tip">{t("settings.waitScopeTip")}</p>
-                <div className="mc-row" aria-labelledby={waitScopeId}>
-                  <Chip tone="accent">
-                    {t("settings.waitStepConfirmation")}
-                  </Chip>
-                  <Chip tone="accent">{t("settings.waitStepEmail")}</Chip>
-                  <Chip tone="accent">{t("settings.waitStepFollow")}</Chip>
+                  <div className="mc-field">
+                    <span className="mc-field__label" id={waitScopeId}>
+                      {t("settings.waitScopeLabel")}
+                    </span>
+                    <p className="mc-field__tip">
+                      {t("settings.waitScopeTip")}
+                    </p>
+                    <div className="mc-row" aria-labelledby={waitScopeId}>
+                      <Chip tone="accent">
+                        {t("settings.waitStepConfirmation")}
+                      </Chip>
+                      <Chip tone="accent">{t("settings.waitStepEmail")}</Chip>
+                      <Chip tone="accent">{t("settings.waitStepFollow")}</Chip>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
 
-            <div className="mc-panel">
-              <div className="mc-panel__head">
-                <h3>{t("settings.questionsTitle")}</h3>
-                <StatusBadge state="info" dot={false}>
-                  {t("settings.conversationScope")}
-                </StatusBadge>
-              </div>
+                <div className="mc-panel">
+                  <div className="mc-panel__head">
+                    <h3>{t("settings.questionsTitle")}</h3>
+                    <StatusBadge state="info" dot={false}>
+                      {t("settings.conversationScope")}
+                    </StatusBadge>
+                  </div>
 
-              {/* The notice that explained the count at length stood here
+                  {/* The notice that explained the count at length stood here
                 until phase 3p and was taken out by name (REQ-323). What the
                 operator is still told, and where, did not move: the field's own
                 `tip` below says the first question is counted, and the echo
@@ -1354,143 +2247,147 @@ export function SettingsScreen({
                 RULE is untouched, and it is proved where it happens
                 (`src/runtime/confirmation.test.ts`), never by this screen. */}
 
-              <Field
-                id={questionsFieldId}
-                type="number"
-                inputMode="numeric"
-                className="mc-input--narrow"
-                label={t("settings.questionsLabel")}
-                // The one sentence this field cannot ship without: the count
-                // includes the FIRST question, and "number of attempts" is the
-                // name that made everybody read it as "how many times it may
-                // get it wrong" (REQ-254).
-                tip={t("settings.questionsTip")}
-                min={settings.stored.limits.questionsMin}
-                hint={hintWithEcho(
-                  t("settings.questionsHint"),
-                  questionsEcho(numberFrom(draft.questions), t),
-                )}
-                error={refusalOf("questions")}
-                value={draft.questions}
-                onChange={(event): void => {
-                  setDraft({ ...draft, questions: event.target.value });
-                }}
-              />
+                  <Field
+                    id={questionsFieldId}
+                    type="number"
+                    inputMode="numeric"
+                    className="mc-input--narrow"
+                    label={t("settings.questionsLabel")}
+                    // The one sentence this field cannot ship without: the count
+                    // includes the FIRST question, and "number of attempts" is the
+                    // name that made everybody read it as "how many times it may
+                    // get it wrong" (REQ-254).
+                    tip={t("settings.questionsTip")}
+                    min={settings.stored.limits.questionsMin}
+                    hint={hintWithEcho(
+                      t("settings.questionsHint"),
+                      questionsEcho(numberFrom(draft.questions), t),
+                    )}
+                    error={refusalOf("questions")}
+                    value={draft.questions}
+                    onChange={(event): void => {
+                      setDraft({ ...draft, questions: event.target.value });
+                    }}
+                  />
 
-              <TextArea
-                id={closingFieldId}
-                rows={2}
-                className="mc-textarea--compact"
-                label={t("settings.closingLabel")}
-                tip={t("settings.closingTip")}
-                hint={t("settings.closingHint")}
-                error={refusalOf("closingMessage")}
-                toolbar={
-                  <Button
-                    variant="secondary"
-                    onClick={(): void => {
-                      // The catalogue's own sentence, the same key the instance
-                      // resolves when nothing was written (REQ-255). Restoring
-                      // the TEXT is all this can do: the route has no way to
-                      // say "hold no value of my own", so a goodbye put back
-                      // here and saved is stored explicitly from then on.
+                  <TextArea
+                    id={closingFieldId}
+                    rows={2}
+                    className="mc-textarea--compact"
+                    label={t("settings.closingLabel")}
+                    tip={t("settings.closingTip")}
+                    hint={t("settings.closingHint")}
+                    error={refusalOf("closingMessage")}
+                    toolbar={
+                      <Button
+                        variant="secondary"
+                        onClick={(): void => {
+                          // The catalogue's own sentence, the same key the instance
+                          // resolves when nothing was written (REQ-255). Restoring
+                          // the TEXT is all this can do: the route has no way to
+                          // say "hold no value of my own", so a goodbye put back
+                          // here and saved is stored explicitly from then on.
+                          setDraft({
+                            ...draft,
+                            closingMessage: t("instance.closingMessage"),
+                          });
+                        }}
+                      >
+                        {t("settings.closingReset")}
+                      </Button>
+                    }
+                    value={draft.closingMessage}
+                    onChange={(event): void => {
                       setDraft({
                         ...draft,
-                        closingMessage: t("instance.closingMessage"),
+                        closingMessage: event.target.value,
                       });
                     }}
-                  >
-                    {t("settings.closingReset")}
-                  </Button>
-                }
-                value={draft.closingMessage}
-                onChange={(event): void => {
-                  setDraft({ ...draft, closingMessage: event.target.value });
-                }}
-              />
-            </div>
+                  />
+                </div>
 
-            <div className="mc-panel">
-              <div className="mc-panel__head">
-                <h3>{t("settings.followTitle")}</h3>
-                <StatusBadge state="info" dot={false}>
-                  {t("settings.conversationScope")}
-                </StatusBadge>
-              </div>
+                <div className="mc-panel">
+                  <div className="mc-panel__head">
+                    <h3>{t("settings.followTitle")}</h3>
+                    <StatusBadge state="info" dot={false}>
+                      {t("settings.conversationScope")}
+                    </StatusBadge>
+                  </div>
 
-              <Field
-                id={followFieldId}
-                label={t("settings.followLabel")}
-                tip={t("settings.followTip")}
-                // No `maxLength` (REQ-306). It used to carry the instance's
-                // ceiling, and it was the worse half of the pair the refusal
-                // made: past twenty the keyboard simply stopped answering, with
-                // no sentence anywhere saying why. The platform accepts the
-                // longer label and cuts only what it draws, so what the ceiling
-                // earns now is the advice below the field, said while the text
-                // is being typed and with the number in it.
-                toolbar={
-                  <span className="mc-source">
-                    {t("settings.followCounter", {
-                      // What a PERSON counts, and not what `String.length`
-                      // answers: an emoji is one character to whoever typed it
-                      // and two UTF-16 units to the browser, and a counter
-                      // reading 21 beside a label its reader counts as 20 is a
-                      // counter arguing with them. The advice below still fires
-                      // on the count that reaches the ceiling first, which is
-                      // the other one: the two answer different questions.
-                      used: measureLength(draft.followButtonLabel).graphemes,
+                  <Field
+                    id={followFieldId}
+                    label={t("settings.followLabel")}
+                    tip={t("settings.followTip")}
+                    // No `maxLength` (REQ-306). It used to carry the instance's
+                    // ceiling, and it was the worse half of the pair the refusal
+                    // made: past twenty the keyboard simply stopped answering, with
+                    // no sentence anywhere saying why. The platform accepts the
+                    // longer label and cuts only what it draws, so what the ceiling
+                    // earns now is the advice below the field, said while the text
+                    // is being typed and with the number in it.
+                    toolbar={
+                      <span className="mc-source">
+                        {t("settings.followCounter", {
+                          // What a PERSON counts, and not what `String.length`
+                          // answers: an emoji is one character to whoever typed it
+                          // and two UTF-16 units to the browser, and a counter
+                          // reading 21 beside a label its reader counts as 20 is a
+                          // counter arguing with them. The advice below still fires
+                          // on the count that reaches the ceiling first, which is
+                          // the other one: the two answer different questions.
+                          used: measureLength(draft.followButtonLabel)
+                            .graphemes,
+                          max: settings.stored.limits.followButtonLabelChars,
+                        })}
+                      </span>
+                    }
+                    hint={t("settings.followHint", {
                       max: settings.stored.limits.followButtonLabelChars,
                     })}
-                  </span>
-                }
-                hint={t("settings.followHint", {
-                  max: settings.stored.limits.followButtonLabelChars,
-                })}
-                advice={followLabelAdvice(
-                  draft.followButtonLabel,
-                  settings.stored.limits.followButtonLabelChars,
-                  t,
-                )}
-                value={draft.followButtonLabel}
-                onChange={(event): void => {
-                  setDraft({
-                    ...draft,
-                    followButtonLabel: event.target.value,
-                  });
-                }}
-              />
+                    advice={followLabelAdvice(
+                      draft.followButtonLabel,
+                      settings.stored.limits.followButtonLabelChars,
+                      t,
+                    )}
+                    value={draft.followButtonLabel}
+                    onChange={(event): void => {
+                      setDraft({
+                        ...draft,
+                        followButtonLabel: event.target.value,
+                      });
+                    }}
+                  />
 
-              <div className="mc-field">
-                <span className="mc-field__label" id={followPreviewId}>
-                  {t("settings.previewFollowLabel")}
-                </span>
-                <p className="mc-field__tip">
-                  {t("settings.previewFollowTip")}
-                </p>
-                <ConversationPreview
-                  labelledBy={followPreviewId}
-                  t={t}
-                  lines={[
-                    {
-                      id: "follow",
-                      step: t("screens.automations.previewStepDirect"),
-                      from: "account",
-                      text: t("settings.previewFollowText"),
-                      quickReply:
-                        draft.followButtonLabel.trim() ||
-                        t("instance.followButtonLabel"),
-                    },
-                  ]}
-                />
-              </div>
+                  <div className="mc-field">
+                    <span className="mc-field__label" id={followPreviewId}>
+                      {t("settings.previewFollowLabel")}
+                    </span>
+                    <p className="mc-field__tip">
+                      {t("settings.previewFollowTip")}
+                    </p>
+                    <ConversationPreview
+                      labelledBy={followPreviewId}
+                      t={t}
+                      lines={[
+                        {
+                          id: "follow",
+                          step: t("screens.automations.previewStepDirect"),
+                          from: "account",
+                          text: t("settings.previewFollowText"),
+                          quickReply:
+                            draft.followButtonLabel.trim() ||
+                            t("instance.followButtonLabel"),
+                        },
+                      ]}
+                    />
+                  </div>
 
-              <Notice nature="info" title={t("settings.followRetapTitle")}>
-                {t("settings.followRetap")}
-              </Notice>
-            </div>
+                  <Notice nature="info" title={t("settings.followRetapTitle")}>
+                    {t("settings.followRetap")}
+                  </Notice>
+                </div>
 
-            {/* The instance's answer to the last write, in the corner and no
+                {/* The instance's answer to the last write, in the corner and no
               longer in the page (REQ-312). It used to be a box beside the
               button, taking the focus so that it would be seen at all; a toast
               is seen wherever the panel has been scrolled to, which is what
@@ -1500,58 +2397,58 @@ export function SettingsScreen({
               nothing here is drawn under a control, so it goes with the same
               rule as the confirmation. Its sentence is the longest of the two,
               and the reading time is measured from it. */}
-            {written !== undefined && "ok" in written ? (
-              <Toast
-                nature="success"
-                title={t("settings.conversationStoredTitle")}
-                message={t("settings.conversationStored")}
-                dismissLabel={t("toast.dismiss")}
-                onDismiss={(): void => setWritten(undefined)}
-              />
-            ) : null}
+                {written !== undefined && "ok" in written ? (
+                  <Toast
+                    nature="success"
+                    title={t("settings.conversationStoredTitle")}
+                    message={t("settings.conversationStored")}
+                    dismissLabel={t("toast.dismiss")}
+                    onDismiss={(): void => setWritten(undefined)}
+                  />
+                ) : null}
 
-            {refusal !== undefined ? (
-              <Toast
-                nature="error"
-                title={t("settings.conversationNotStoredTitle")}
-                message={t(
-                  CONVERSATION_REFUSAL_KEYS[refusal.error] ??
-                    UNKNOWN_CONVERSATION_REFUSAL,
-                  { count: refusal.limit ?? 0 },
-                )}
-                dismissLabel={t("toast.dismiss")}
-                onDismiss={(): void => setWritten(undefined)}
-              />
+                {refusal !== undefined ? (
+                  <Toast
+                    nature="error"
+                    title={t("settings.conversationNotStoredTitle")}
+                    message={t(
+                      CONVERSATION_REFUSAL_KEYS[refusal.error] ??
+                        UNKNOWN_CONVERSATION_REFUSAL,
+                      { count: refusal.limit ?? 0 },
+                    )}
+                    dismissLabel={t("toast.dismiss")}
+                    onDismiss={(): void => setWritten(undefined)}
+                  />
+                ) : null}
+              </>
             ) : null}
-          </>
-        ) : null}
-      </section>
+          </section>
 
-      {/* The theme, and the one setting on this screen that is not the
+          {/* The theme, and the one setting on this screen that is not the
           instance's (REQ-326). It is a panel of its own rather than a fourth
           control in the global block for exactly that reason: those hold for
           every browser that signs in, and this one holds for the browser it is
           chosen in. The note says so, and it is the sentence that keeps the
           save button at the foot from looking like it carries this too. */}
-      <section
-        className="mc-panel mc-jump-target"
-        style={FORM_WIDTH}
-        id={SETTINGS_BLOCKS.theme}
-        tabIndex={-1}
-        aria-labelledby={headingIdOf(SETTINGS_BLOCKS.theme)}
-      >
-        <div className="mc-panel__head">
-          <h2
-            className="mc-panel__title"
-            id={headingIdOf(SETTINGS_BLOCKS.theme)}
+          <section
+            className="mc-panel mc-jump-target"
+            style={FORM_WIDTH}
+            id={SETTINGS_BLOCKS.theme}
+            tabIndex={-1}
+            aria-labelledby={headingIdOf(SETTINGS_BLOCKS.theme)}
           >
-            {t("settings.themeTitle")}
-          </h2>
-        </div>
+            <div className="mc-panel__head">
+              <h2
+                className="mc-panel__title"
+                id={headingIdOf(SETTINGS_BLOCKS.theme)}
+              >
+                {t("settings.themeTitle")}
+              </h2>
+            </div>
 
-        <p className="mc-panel__note">{t("settings.themeNote")}</p>
+            <p className="mc-panel__note">{t("settings.themeNote")}</p>
 
-        {/* A `Select`, which is what the two settings above it use: three
+            {/* A `Select`, which is what the two settings above it use: three
             mutually exclusive answers are the same kind of decision as a
             language, and the native control already carries the value
             programmatically, walks with the arrows and announces the option in
@@ -1561,58 +2458,67 @@ export function SettingsScreen({
             wait for: `chooseTheme` marks the document and stores the answer on
             this machine, and a store that refuses still leaves the theme
             applied to the page in front of the operator. */}
-        <Field id={themeFieldId} label={t("settings.themeLabel")}>
-          <Select
-            id={themeFieldId}
-            value={theme}
-            options={THEME_CHOICES.map((choice) => ({
-              value: choice,
-              label: t(THEME_KEYS[choice]),
-            }))}
-            onChange={(event): void => {
-              const chosen = event.target.value as ThemeChoice;
+            <Field id={themeFieldId} label={t("settings.themeLabel")}>
+              <Select
+                id={themeFieldId}
+                value={theme}
+                options={THEME_CHOICES.map((choice) => ({
+                  value: choice,
+                  label: t(THEME_KEYS[choice]),
+                }))}
+                onChange={(event): void => {
+                  const chosen = event.target.value as ThemeChoice;
 
-              setTheme(chosen);
-              chooseTheme(chosen);
-            }}
-          />
-        </Field>
-      </section>
+                  setTheme(chosen);
+                  chooseTheme(chosen);
+                }}
+              />
+            </Field>
+          </section>
 
-      {/* The two buttons of the global settings, at the END of the screen
+          {/* The two buttons of the global settings, at the END of the screen
           (REQ-324). They are the last thing on the page and no longer a row in
           the middle of it, so whatever the operator changed anywhere above is
           committed from one place, reached by scrolling to the bottom.
 
           Still drawn only once the four have been READ: a save button over
           values nobody knows would write whatever the empty controls held. */}
-      {settings.status === "ready" && draft !== undefined ? (
-        <div className="mc-stack" style={FORM_WIDTH}>
-          <div className="mc-row">
-            <Button
-              variant="primary"
-              pending={saving}
-              onClick={(): void => {
-                void saveConversation();
-              }}
-            >
-              {saving
-                ? t("settings.conversationSaving")
-                : t("settings.conversationSave")}
-            </Button>
-            <Button
-              disabled={saving}
-              onClick={(): void => {
-                discardConversation();
-              }}
-            >
-              {t("settings.conversationDiscard")}
-            </Button>
-          </div>
+          {settings.status === "ready" && draft !== undefined ? (
+            <div className="mc-stack" style={FORM_WIDTH}>
+              <div className="mc-row">
+                <Button
+                  variant="primary"
+                  pending={saving}
+                  onClick={(): void => {
+                    void saveConversation();
+                  }}
+                >
+                  {saving
+                    ? t("settings.conversationSaving")
+                    : t("settings.conversationSave")}
+                </Button>
+                <Button
+                  disabled={saving}
+                  onClick={(): void => {
+                    discardConversation();
+                  }}
+                >
+                  {t("settings.conversationDiscard")}
+                </Button>
+              </div>
 
-          <p className="mc-panel__note">{t("settings.conversationSaveHint")}</p>
-        </div>
+              <p className="mc-panel__note">
+                {t("settings.conversationSaveHint")}
+              </p>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
+}
+
+/** The operational counterpart to application Settings, kept as its own route. */
+export function InstanceScreen(): ReactElement {
+  return <SettingsScreen view="instance" />;
 }

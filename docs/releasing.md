@@ -17,6 +17,37 @@ node scripts/public-release.js . ../mychat-public
 Review that generated directory before committing or pushing it. The exporter
 rejects symlinks, files outside the allow-list, and recognizable credentials.
 
+## Protect the public branch
+
+In the public GitHub repository, create a branch protection rule for `main`:
+
+1. Restrict pushes to the dedicated release identity only. Do not grant this
+   permission to the account used for ordinary development.
+2. Require the `check` CI workflow to pass before a change is merged.
+3. Block force pushes and branch deletion.
+
+The release identity needs access only to the public repository. Keep it out of
+the private repository, do not place its credential in this project, and never
+use a personal development credential for the publication flow.
+
+## Publish the derived tree
+
+Keep a clean checkout of the public repository on its `main` branch. From the
+private checkout, run:
+
+```sh
+npm run publish:public -- /absolute/path/to/mychat-public
+```
+
+Before changing the public checkout, the command verifies that the private
+checkout is on `main`, that its `origin` and `public` remotes match the
+configured repository names, and that the destination checkout is clean and
+points to the expected public remote. It then derives the allow-listed tree,
+commits it in the public checkout only when it changed, and pushes `main`.
+
+If any check fails, stop and correct the reported condition. Do not use force
+push, copy files manually, or bypass the branch protection rule.
+
 ## Release a stable version
 
 Only a pushed Git tag in the form `vMAJOR.MINOR.PATCH` starts the release

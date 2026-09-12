@@ -7,12 +7,12 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentType, ReactElement } from "react";
 import en from "../i18n/locales/en.json";
 import ptBR from "../i18n/locales/pt-BR.json";
 import { App, matchRoute } from "./App.js";
-import type { SessionProbe } from "./App.js";
+import type { OnboardingProbe, SessionProbe } from "./App.js";
 import { LocaleProvider } from "./locale.js";
 import type { LocaleClient, LocaleState } from "./locale.js";
 import { useNavigation } from "./navigation.js";
@@ -212,6 +212,10 @@ function createProbe(open: boolean): ProbeDouble {
   return double;
 }
 
+function createOnboardingProbe(complete: boolean): OnboardingProbe {
+  return { isComplete: (): Promise<boolean> => Promise.resolve(complete) };
+}
+
 /** The instance's language, so a provider around the app never fetches. */
 function localeClient(locale: string): LocaleClient {
   const state: LocaleState = { locale, available: ["en", "pt-BR"] };
@@ -283,6 +287,18 @@ beforeEach(() => {
   // Every test starts from an address none of them asserts about: navigation
   // writes the real address bar, and the next test must not inherit it.
   window.history.pushState({}, "", "/");
+  vi.stubGlobal("fetch", (): Promise<Response> =>
+    Promise.resolve(
+      new Response(JSON.stringify({ onboarding: { complete: true } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("the SPA scaffold", () => {
@@ -444,6 +460,52 @@ describe("REQ-302: the root leads somewhere, and so does an address nobody claim
 
     expect(window.location.pathname).toBe(LOGIN_ADDRESS);
     expect(screen.queryByRole("navigation")).toBeNull();
+  });
+
+  it("keeps operational routes behind the integration journey", async () => {
+    render(
+      <App
+        routes={stubbed}
+        pathname={DASHBOARD_ADDRESS}
+        probe={createProbe(true)}
+        onboarding={createOnboardingProbe(false)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("/setup")).toBeInTheDocument();
+    });
+  });
+
+  it("keeps integrations reachable while the journey is incomplete", async () => {
+    render(
+      <App
+        routes={stubbed}
+        pathname="/instance"
+        probe={createProbe(true)}
+        onboarding={createOnboardingProbe(false)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("/instance")).toBeInTheDocument();
+    });
+  });
+
+  it("releases the operator from the checklist once the journey is complete", async () => {
+    render(
+      <App
+        routes={stubbed}
+        pathname="/setup"
+        probe={createProbe(true)}
+        onboarding={createOnboardingProbe(true)}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId(DASHBOARD_ADDRESS)).toBeInTheDocument();
+    });
+    expect(window.location.pathname).toBe(DASHBOARD_ADDRESS);
   });
 });
 

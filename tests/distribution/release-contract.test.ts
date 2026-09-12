@@ -55,6 +55,8 @@ describe("distribution release contract", () => {
       "scripts/meta-environments.js",
       "scripts/meta-environments.d.ts",
       "scripts/public-release.js",
+      "scripts/public-publish.js",
+      "scripts/public-publish.d.ts",
       "scripts/release-manifest.js",
       "scripts/update-panel.js",
       "scripts/update-panel.d.ts",
@@ -68,5 +70,27 @@ describe("distribution release contract", () => {
     }
     expect(allowlist.allowedDirectories).toContain(".github");
     expect(allowlist.allowedDirectories).toContain("tests");
+  });
+
+  it("makes CI verify the derived public tree before the normal gates", () => {
+    const workflow = readProjectFile(".github/workflows/ci.yml");
+
+    expect(workflow).toContain("Verify public distribution tree");
+    expect(workflow).toContain(
+      'node scripts/public-release.js . "$(mktemp -d)/mychat-public"',
+    );
+  });
+
+  it("documents branch protection and the guarded public publisher", () => {
+    const guide = readProjectFile("docs/releasing.md");
+
+    expect(guide).toContain("## Protect the public branch");
+    expect(guide).toContain(
+      "Restrict pushes to the dedicated release identity",
+    );
+    expect(guide).toContain("Block force pushes and branch deletion");
+    expect(guide).toContain(
+      "npm run publish:public -- /absolute/path/to/mychat-public",
+    );
   });
 });

@@ -104,6 +104,18 @@ export {
 } from "./credentials.js";
 
 export type { CredentialStore, StoredCredential } from "./credentials.js";
+export { createSecretCipher } from "./credentials.js";
+export type { SecretCipher } from "./credentials.js";
+
+export {
+  createStorageConfigurationStore,
+  STORAGE_CONFIGURATION_ID,
+} from "./storage-configuration.js";
+export type {
+  PersistedStorageConfiguration,
+  PersistedStorageDriver,
+  StorageConfigurationStore,
+} from "./storage-configuration.js";
 
 export { createContactRepository } from "./contacts.js";
 

@@ -124,6 +124,32 @@ describe("REQ-220/REQ-221: signed attributed click redirect", () => {
     ]);
   });
 
+  it("reads the public origin again when a later button is wrapped", async () => {
+    let origin = "https://first.example";
+    const writer = createButtonLinkWriter({
+      store,
+      secret,
+      publicOrigin: () => Promise.resolve(origin),
+    });
+    const wrap = async (executionId: string): Promise<string> => {
+      const [button] = await writer.wrap(
+        [{ id: "download", label: "Download", url: "https://target.example" }],
+        {
+          automationId: "launch",
+          contactId: "contact-7",
+          executionId,
+        },
+        NOW,
+      );
+      if (button === undefined) throw new Error("button was not wrapped");
+      return button.url;
+    };
+
+    expect(new URL(await wrap("run-1")).origin).toBe("https://first.example");
+    origin = "https://panel.example";
+    expect(new URL(await wrap("run-2")).origin).toBe("https://panel.example");
+  });
+
   it("does not redirect for an altered signature or an arbitrary URL query", async () => {
     const url = await signedUrl();
     url.searchParams.set("signature", `${url.searchParams.get("signature")}0`);

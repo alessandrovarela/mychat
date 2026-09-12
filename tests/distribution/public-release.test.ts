@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  assertPublicationContext,
   assertRemoteTopology,
   preparePublicRelease,
   verifyPublicTree,
@@ -144,5 +145,47 @@ describe("public release allowlist", () => {
         config,
       ),
     ).not.toThrow();
+  });
+
+  it("binds a public release to the configured repositories and source branch", () => {
+    const context = {
+      branch: "main",
+      remotes: {
+        origin: "git@github.com:owner/mychat-dev.git",
+        public: "https://github.com/owner/mychat.git",
+      },
+    };
+
+    expect(() => assertPublicationContext(context, config)).not.toThrow();
+    expect(() =>
+      assertPublicationContext(
+        { ...context, branch: "feature/unsafe" },
+        config,
+      ),
+    ).toThrow("authorized source branch");
+    expect(() =>
+      assertPublicationContext(
+        {
+          ...context,
+          remotes: {
+            ...context.remotes,
+            origin: "git@github.com:owner/other.git",
+          },
+        },
+        config,
+      ),
+    ).toThrow("source remote does not match");
+    expect(() =>
+      assertPublicationContext(
+        {
+          ...context,
+          remotes: {
+            ...context.remotes,
+            public: "git@github.com:owner/other.git",
+          },
+        },
+        config,
+      ),
+    ).toThrow("destination remote does not match");
   });
 });

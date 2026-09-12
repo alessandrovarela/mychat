@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AutomationAggregateLifecycle } from "../flows/automations.js";
 import { contractGaps, registerApiRoutes, routeLabel } from "./api/index.js";
 import type { ApiDeps, RegisteredRoute } from "./api/index.js";
+import { registerInstanceRoutes } from "./api/instance.js";
 
 const NOW = new Date("2026-08-14T12:00:00.000Z");
 let open: FastifyInstance[] = [];
@@ -81,5 +82,49 @@ describe("REQ-103/REQ-216: the current API contract", () => {
       error: "invalid_request",
       issues: [expect.objectContaining({ path: "definition" })],
     });
+  });
+
+  it("declares the secret-safe setup envelope without credential fields", async () => {
+    const app = Fastify({ logger: false });
+    open.push(app);
+    const routes: RegisteredRoute[] = [];
+    app.addHook("onRoute", (route) => {
+      routes.push({
+        method: route.method,
+        url: route.url,
+        schema: route.schema,
+      });
+    });
+
+    registerInstanceRoutes(
+      app,
+      {} as ApiDeps["timeZone"],
+      {} as NonNullable<ApiDeps["triggerSwitches"]>,
+      {} as ApiDeps["instanceSettings"],
+      {
+        state: {
+          isComplete: () => Promise.resolve(false),
+          complete: () => Promise.resolve(),
+        },
+        credentials: {
+          read: () => Promise.resolve(undefined),
+          write: () => Promise.resolve(),
+        },
+        now: () => NOW,
+      },
+    );
+    await app.ready();
+
+    const setup = routes.filter((route) => route.url === "/api/instance/setup");
+    expect(setup.map(routeLabel)).toEqual(
+      expect.arrayContaining([
+        "GET /api/instance/setup",
+        "POST /api/instance/setup",
+      ]),
+    );
+    expect(setup.flatMap(contractGaps)).toEqual([]);
+    expect(
+      JSON.stringify(setup.map((route) => route.schema?.response)),
+    ).not.toMatch(/password|accessToken|passwordHash/);
   });
 });

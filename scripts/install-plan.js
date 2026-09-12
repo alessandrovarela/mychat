@@ -90,13 +90,10 @@ export function createInstallPlan({ configuration, consent, host }) {
       deferredCommands: consent ? [] : prerequisiteCommands,
     },
     secrets: {
-      destination: ".env",
-      generatedByOperator: true,
-      keys: ["META_APP_SECRET", "WEBHOOK_VERIFY_TOKEN"],
-      commands: [
-        "openssl rand -hex 32 # META_APP_SECRET",
-        "openssl rand -hex 32 # WEBHOOK_VERIFY_TOKEN",
-      ],
+      destination: "first-setup wizard and Integrations",
+      generatedByOperator: false,
+      keys: [],
+      commands: [],
       values: [],
     },
     startup: {
@@ -119,9 +116,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     JSON.stringify(
       createInstallPlan({
         configuration: {
-          MYCHAT_LOCALE: "pt-BR",
-          MYCHAT_TIMEZONE: "America/Sao_Paulo",
-          PUBLIC_ORIGIN: "https://chat.example.com",
+          PORT: "3000",
+          DATABASE_PATH: "/var/lib/mychat/mychat.db",
+          ASSETS_DIR: "/var/lib/mychat/assets",
         },
         consent: false,
         host: { architecture, id: "ubuntu", version: "24.04" },

@@ -176,6 +176,13 @@
       "when": 1787486400000,
       "tag": "0024_message_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1788710400000,
+      "tag": "0025_storage_config",
+      "breakpoints": true
     }
   ]
 }

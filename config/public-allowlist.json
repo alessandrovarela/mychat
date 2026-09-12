@@ -1,6 +1,7 @@
 {
   "sourceRemote": "origin",
   "publicRemote": "public",
+  "sourceBranch": "main",
   "sourceRepository": "mychat-dev",
   "publicRepository": "mychat",
   "allowedFiles": [
@@ -62,6 +63,8 @@
     "docs/updating.md",
     "scripts/public-release.js",
     "scripts/public-release.d.ts",
+    "scripts/public-publish.js",
+    "scripts/public-publish.d.ts",
     "scripts/first-use.js",
     "scripts/first-use.d.ts",
     "scripts/install-plan.js",

@@ -9,6 +9,7 @@ import { TOAST_VIEWPORT_ID } from "../components/index.js";
 import { LocaleProvider } from "../locale.js";
 import type { LocaleClient, LocaleState } from "../locale.js";
 import { THEME_ATTRIBUTE, THEME_STORAGE_KEY } from "../theme.js";
+import { timeZoneOptionLabel } from "../time-zone.js";
 import {
   CONVERSATION_REFUSAL_TEXT_KEYS,
   SETTINGS_BLOCKS,
@@ -22,6 +23,8 @@ import type {
   ConversationRefusal,
   ConversationSettings,
   ConversationWrite,
+  ConfigurationClient,
+  IntegrationClient,
   InstanceClient,
   InstanceState,
   TriggerSwitchName,
@@ -245,10 +248,19 @@ function show(
   client: LocaleClient,
   instance: InstanceClient = createInstanceDouble(),
   conversation: ConversationClient = createConversationDouble(),
+  configuration?: ConfigurationClient,
+  integrations?: IntegrationClient,
+  view: "application" | "instance" = "application",
 ): ReactElement {
   return (
     <LocaleProvider client={client}>
-      <SettingsScreen instance={instance} conversation={conversation} />
+      <SettingsScreen
+        view={view}
+        instance={instance}
+        conversation={conversation}
+        {...(configuration === undefined ? {} : { configuration })}
+        {...(integrations === undefined ? {} : { integrations })}
+      />
     </LocaleProvider>
   );
 }
@@ -546,8 +558,12 @@ describe("REQ-166: the screen names the zone the instance is really on", () => {
     const themePanel = panelOf(copy.themeTitle);
 
     expect(zonePanel).not.toBe(themePanel);
-    expect(within(zonePanel).getByText(OPERATOR_ZONE)).toBeInTheDocument();
-    expect(within(themePanel).queryByText(OPERATOR_ZONE)).toBeNull();
+    expect(
+      within(zonePanel).getByText(timeZoneOptionLabel(OPERATOR_ZONE)),
+    ).toBeInTheDocument();
+    expect(
+      within(themePanel).queryByText(timeZoneOptionLabel(OPERATOR_ZONE)),
+    ).toBeNull();
     expect(within(themePanel).queryByText(copy.timezoneLabel)).toBeNull();
 
     // And the seal is gone from the whole screen rather than moved: every
@@ -610,7 +626,7 @@ describe("REQ-183: the zone is changed here, and holds with no restart", () => {
       within(selector)
         .getAllByRole("option")
         .map((option) => option.textContent),
-    ).toEqual(ZONES);
+    ).toEqual(ZONES.map((zone) => timeZoneOptionLabel(zone)));
     expect(selector).toHaveValue(OPERATOR_ZONE);
   });
 
@@ -2199,7 +2215,7 @@ function ruleBodyOf(selector: string): string {
 }
 
 describe("REQ-327: Settings is navigated by the titles of its blocks", () => {
-  it("offers one entry per block, and the four blocks are the four titles", async () => {
+  it("offers one entry per block, including integrations", async () => {
     render(show(createLocaleDouble(), createInstanceDouble()));
     await screen.findByLabelText(copy.timezoneLabel);
 
@@ -2341,5 +2357,497 @@ describe("REQ-327: Settings is navigated by the titles of its blocks", () => {
     // and a switch is not a button. The floor is on the LABEL, which is the
     // whole clickable area, so the track keeps its own drawing.
     expect(ruleBodyOf(".mc-switch")).toContain("min-block-size: var(--tap)");
+  });
+});
+
+describe("Settings operates masked integrations in the authenticated panel", () => {
+  it("shows persisted credentials without exposing the saved secrets", async () => {
+    const configuration: ConfigurationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: {
+            configured: true,
+            appSecretConfigured: true,
+            accountId: "17841465699776281",
+          },
+          storage: { driver: "local", configured: true },
+          publicOrigin: "https://mychat.example.test",
+          publicOriginVerifiedAt: "2026-09-06T00:00:00.000Z",
+          webhookVerifyToken: true,
+          installedVersion: "development",
+        }),
+      write: () => Promise.resolve({ ok: true }),
+    };
+    render(
+      show(
+        createLocaleDouble(),
+        createInstanceDouble(),
+        createConversationDouble(),
+        configuration,
+        undefined,
+        "instance",
+      ),
+    );
+
+    expect(await screen.findByLabelText(copy.metaAccountIdLabel)).toHaveValue(
+      "17841465699776281",
+    );
+    expect(screen.getByLabelText(copy.metaAppSecretLabel)).toHaveValue(
+      "••••••••••••",
+    );
+    expect(screen.getByLabelText(copy.metaAccessTokenLabel)).toHaveValue(
+      "••••••••••••",
+    );
+    expect(screen.getByLabelText(copy.webhookTokenLabel)).toHaveValue(
+      "••••••••••••",
+    );
+    expect(screen.getByLabelText(copy.publicOriginLabel)).toBeDisabled();
+    expect(screen.getByLabelText(copy.webhookTokenLabel)).toBeDisabled();
+    expect(screen.getByLabelText(copy.metaAppSecretLabel)).toBeDisabled();
+    expect(screen.getByLabelText(copy.metaAccountIdLabel)).toBeDisabled();
+    expect(screen.getByLabelText(copy.metaAccessTokenLabel)).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: copy.generateWebhookToken }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: copy.copyWebhookToken }),
+    ).toBeDisabled();
+  });
+
+  it("confirms when the saved webhook token is copied", async () => {
+    const generated = "new-webhook-token";
+    let webhookVerifyToken = false;
+    const configuration: ConfigurationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: { configured: false, appSecretConfigured: false },
+          storage: { driver: "local", configured: true },
+          publicOrigin: "https://mychat.example.test",
+          publicOriginVerifiedAt: "2026-09-06T00:00:00.000Z",
+          webhookVerifyToken,
+          installedVersion: "development",
+        }),
+      write: (change) => {
+        if (change.action === "set_webhook_verify_token") {
+          webhookVerifyToken = true;
+        }
+        return Promise.resolve(
+          change.action === "generate_webhook_verify_token"
+            ? { ok: true, generatedWebhookVerifyToken: generated }
+            : { ok: true },
+        );
+      },
+    };
+    const user = userEvent.setup();
+    render(
+      show(
+        createLocaleDouble(),
+        createInstanceDouble(),
+        createConversationDouble(),
+        configuration,
+        undefined,
+        "instance",
+      ),
+    );
+
+    await screen.findByText(copy.webhookSectionTitle);
+    await user.click(
+      screen.getByRole("button", { name: copy.generateWebhookToken }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: copy.saveWebhookToken }),
+    );
+    const copyToken = screen.getByRole("button", {
+      name: copy.copyWebhookToken,
+    });
+    await waitFor(() => expect(copyToken).toBeEnabled());
+    await user.click(copyToken);
+
+    expect(
+      await screen.findByText(copy.copySucceededTitle),
+    ).toBeInTheDocument();
+    expect(screen.getByText(copy.webhookTokenCopied)).toBeInTheDocument();
+  });
+
+  it("shows a generated webhook token until saving it, then masks it", async () => {
+    const generated = "new-webhook-token";
+    const writes: Record<string, string>[] = [];
+    const configuration: ConfigurationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: { configured: false, appSecretConfigured: false },
+          storage: { driver: "local", configured: true },
+          publicOrigin: "https://mychat.example.test",
+          publicOriginVerifiedAt: "2026-09-06T00:00:00.000Z",
+          webhookVerifyToken: false,
+          installedVersion: "development",
+        }),
+      write: (change) => {
+        writes.push(change);
+        return Promise.resolve(
+          change.action === "generate_webhook_verify_token"
+            ? { ok: true, generatedWebhookVerifyToken: generated }
+            : { ok: true },
+        );
+      },
+    };
+    const user = userEvent.setup();
+    render(
+      show(
+        createLocaleDouble(),
+        createInstanceDouble(),
+        createConversationDouble(),
+        configuration,
+        undefined,
+        "instance",
+      ),
+    );
+
+    await screen.findByText(copy.webhookSectionTitle);
+    await user.click(
+      screen.getByRole("button", { name: copy.generateWebhookToken }),
+    );
+    const field = screen.getByLabelText(copy.webhookTokenLabel);
+    await waitFor(() => expect(field).toHaveValue(generated));
+    expect(field).toHaveClass("mc-input--mono");
+    expect(field).toHaveAttribute("type", "text");
+    await user.click(
+      screen.getByRole("button", { name: copy.saveWebhookToken }),
+    );
+
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(field).toHaveValue(generated);
+    expect(field).toHaveAttribute("type", "password");
+  });
+
+  it("keeps a pasted verification token readable until it is saved", async () => {
+    const configuration: ConfigurationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: { configured: false, appSecretConfigured: false },
+          storage: { driver: "local", configured: true },
+          publicOrigin: "https://mychat.example.test",
+          publicOriginVerifiedAt: "2026-09-06T00:00:00.000Z",
+          webhookVerifyToken: false,
+          installedVersion: "development",
+        }),
+      write: () => Promise.resolve({ ok: true }),
+    };
+    const user = userEvent.setup();
+    render(
+      show(
+        createLocaleDouble(),
+        createInstanceDouble(),
+        createConversationDouble(),
+        configuration,
+        undefined,
+        "instance",
+      ),
+    );
+
+    const field = await screen.findByLabelText(copy.webhookTokenLabel);
+    await user.type(field, "pasted-token");
+    expect(field).toHaveAttribute("type", "text");
+    await user.click(
+      screen.getByRole("button", { name: copy.saveWebhookToken }),
+    );
+    await waitFor(() => expect(field).toHaveAttribute("type", "password"));
+  });
+
+  it("only enables public-address actions for the appropriate saved state", async () => {
+    let savedOrigin: string | undefined = "https://mychat.example.test";
+    const configuration: ConfigurationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: { configured: false, appSecretConfigured: false },
+          storage: { driver: "local", configured: true },
+          publicOrigin: savedOrigin,
+          webhookVerifyToken: false,
+          installedVersion: "development",
+        }),
+      write: (change) => {
+        if (change.action === "set_public_origin") {
+          savedOrigin = change.publicOrigin ?? savedOrigin;
+        }
+        if (change.action === "remove_public_origin") savedOrigin = undefined;
+        return Promise.resolve({ ok: true });
+      },
+    };
+    const user = userEvent.setup();
+    render(
+      show(
+        createLocaleDouble(),
+        createInstanceDouble(),
+        createConversationDouble(),
+        configuration,
+        undefined,
+        "instance",
+      ),
+    );
+
+    const testAddress = await screen.findByRole("button", {
+      name: copy.testPublicOrigin,
+    });
+    const saveAddress = screen.getByRole("button", {
+      name: copy.savePublicOrigin,
+    });
+    expect(testAddress).toBeEnabled();
+    expect(saveAddress).toBeDisabled();
+    const address = screen.getByLabelText(copy.publicOriginLabel);
+    expect(address).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: copy.removePublicOrigin }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: copy.removeConfigurationConfirm }),
+    );
+    await waitFor(() => expect(address).toBeEnabled());
+    await user.type(address, "https://changed.example.test");
+    expect(testAddress).toBeDisabled();
+    expect(saveAddress).toBeEnabled();
+    await user.click(saveAddress);
+    await waitFor(() => expect(testAddress).toBeEnabled());
+    expect(saveAddress).toBeDisabled();
+  });
+
+  it("allows entered Meta credentials to be saved while callback confirmation is pending", async () => {
+    const configuration: ConfigurationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: { configured: false, appSecretConfigured: true },
+          storage: { driver: "local", configured: true },
+          publicOrigin: "https://mychat.example.test",
+          publicOriginVerifiedAt: "2026-09-06T00:00:00.000Z",
+          webhookVerifyToken: true,
+          installedVersion: "development",
+        }),
+      write: () => Promise.resolve({ ok: true }),
+    };
+    const user = userEvent.setup();
+    render(
+      show(
+        createLocaleDouble(),
+        createInstanceDouble(),
+        createConversationDouble(),
+        configuration,
+        undefined,
+        "instance",
+      ),
+    );
+
+    expect(
+      await screen.findByText(copy.metaCredentialsReadyTitle),
+    ).toBeInTheDocument();
+    const saveMeta = screen.getByRole("button", { name: copy.saveMeta });
+    expect(saveMeta).toBeDisabled();
+    await user.type(screen.getByLabelText(copy.metaAccountIdLabel), "1784");
+    await user.type(
+      screen.getByLabelText(copy.metaAccessTokenLabel),
+      "access-token",
+    );
+    expect(saveMeta).toBeEnabled();
+  });
+
+  it("locks saved integration values until the matching remove action", async () => {
+    const configuration: ConfigurationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: {
+            configured: true,
+            appSecretConfigured: true,
+            accountId: "1784",
+          },
+          storage: {
+            driver: "r2",
+            configured: true,
+            endpoint: "https://r2.example.test",
+            bucket: "assets",
+          },
+          publicOrigin: "https://panel.example.test",
+          publicOriginVerifiedAt: "2026-09-06T00:00:00.000Z",
+          webhookVerifyToken: true,
+          webhookConfirmedAt: "2026-09-06T00:00:00.000Z",
+          installedVersion: "1.2.3",
+        }),
+      write: () => {
+        return Promise.resolve({ ok: true });
+      },
+    };
+    render(
+      show(
+        createLocaleDouble(),
+        createInstanceDouble(),
+        createConversationDouble(),
+        configuration,
+        undefined,
+        "instance",
+      ),
+    );
+    await screen.findByText(copy.metaConfigured);
+    expect(screen.queryByLabelText("Current password")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: copy.metaSectionTitle }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: copy.storageSectionTitle }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: copy.webhookSectionTitle }),
+    ).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("saved-secret")).not.toBeInTheDocument();
+    const appSecret = screen.getByLabelText(copy.metaAppSecretLabel);
+    await waitFor(() => expect(appSecret).toHaveValue("••••••••••••"));
+    expect(appSecret).toBeDisabled();
+    expect(screen.getByLabelText(copy.metaAccountIdLabel)).toBeDisabled();
+    expect(screen.getByLabelText(copy.metaAccessTokenLabel)).toBeDisabled();
+    expect(screen.getByLabelText(copy.storageDriverLabel)).toBeDisabled();
+    expect(screen.getByLabelText(copy.publicOriginLabel)).toBeDisabled();
+    expect(screen.getByLabelText(copy.webhookTokenLabel)).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: copy.removeMetaAppSecret }),
+    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: copy.removeMeta })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: copy.removeStorage }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: copy.removePublicOrigin }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: copy.removeWebhookToken }),
+    ).toBeEnabled();
+  });
+
+  it("keeps removal unavailable until a saved value exists and reports an unsuccessful storage test", async () => {
+    const configuration: ConfigurationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: { configured: false, appSecretConfigured: false },
+          storage: { driver: "r2", configured: false },
+          webhookVerifyToken: false,
+          installedVersion: "1.2.3",
+        }),
+      write: (change) =>
+        Promise.resolve(
+          change.action === "test_storage"
+            ? { ok: false, status: "failure", reason: "unreachable" }
+            : { ok: true },
+        ),
+    };
+    render(
+      show(
+        createLocaleDouble(),
+        createInstanceDouble(),
+        createConversationDouble(),
+        configuration,
+        undefined,
+        "instance",
+      ),
+    );
+
+    await screen.findByText(copy.metaMissing);
+    expect(
+      screen.getByRole("button", { name: copy.removeMeta }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: copy.removeStorage }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: copy.removePublicOrigin }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: copy.removeWebhookToken }),
+    ).toBeDisabled();
+
+    expect(
+      screen.getByRole("button", { name: copy.testStorage }),
+    ).toBeDisabled();
+  });
+});
+
+describe("REQ-439: Settings names server version and verified integration health", () => {
+  it("distinguishes pending, healthy and failed results without inventing a version", async () => {
+    const configuration: ConfigurationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: { configured: true, appSecretConfigured: true },
+          storage: { driver: "r2", configured: true },
+          webhookVerifyToken: false,
+          installedVersion: "9.8.7",
+        }),
+      write: () => Promise.resolve({ ok: true }),
+    };
+    const first: IntegrationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: { status: "pending" },
+          storage: { driver: "r2", status: "failure", reason: "unreachable" },
+        }),
+    };
+    render(
+      show(
+        createLocaleDouble(),
+        createInstanceDouble(),
+        createConversationDouble(),
+        configuration,
+        first,
+        "instance",
+      ),
+    );
+    expect(
+      await screen.findByText("Installed version: 9.8.7"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(copy.metaHealthPending)).toBeInTheDocument();
+    expect(
+      screen.getByText(copy.storageHealthFailure.replace("{{driver}}", "r2")),
+    ).toBeInTheDocument();
+  });
+
+  it("names a healthy check separately from configured state", async () => {
+    const configuration: ConfigurationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: { configured: true, appSecretConfigured: true },
+          storage: { driver: "local", configured: true },
+          webhookVerifyToken: false,
+          installedVersion: "9.8.7",
+        }),
+      write: () => Promise.resolve({ ok: true }),
+    };
+    const integrations: IntegrationClient = {
+      read: () =>
+        Promise.resolve({
+          meta: { status: "healthy" },
+          storage: { driver: "local", status: "healthy" },
+        }),
+    };
+    render(
+      show(
+        createLocaleDouble(),
+        createInstanceDouble(),
+        createConversationDouble(),
+        configuration,
+        integrations,
+        "instance",
+      ),
+    );
+    expect(await screen.findByText(copy.metaHealthHealthy)).toBeInTheDocument();
+    expect(screen.getByText(copy.metaHealthHealthy)).toHaveClass(
+      "mc-badge--active",
+    );
+    expect(
+      screen.getByText(
+        copy.storageHealthHealthy.replace("{{driver}}", "local"),
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        copy.storageHealthHealthy.replace("{{driver}}", "local"),
+      ),
+    ).toHaveClass("mc-badge--active");
+    expect(screen.getByText("Installed version: 9.8.7")).toHaveClass(
+      "mc-badge--info",
+      "mc-badge--square",
+    );
   });
 });

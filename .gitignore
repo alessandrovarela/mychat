@@ -19,8 +19,10 @@ dev-data/
 # STATE.md, KEEL.md, config.json, phases/) IS the project contract and MUST
 # stay versioned — that contract is the reason HelmIt exists.
 .helmit/map/
+.helmit/proof-worktrees/
 .helmit/*.jsonl
 .helmit/lock.json
+.helmit/executor-lease.json
 .helmit/yolo.json
 .helmit/HANDOFF.md
 .helmit/dashboard.html

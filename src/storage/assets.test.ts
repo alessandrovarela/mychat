@@ -299,7 +299,7 @@ describe("REQ-047: the writable disk asset binding", () => {
 
     expect(existsSync(outside)).toBe(false);
     expect(await assets.exists("../escaped.png")).toBe(false);
-    expect(() => assets.publicUrl("../escaped.png")).toThrow();
+    await expect(assets.publicUrl("../escaped.png")).rejects.toThrow();
   });
 });
 

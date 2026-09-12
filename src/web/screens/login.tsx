@@ -1,4 +1,4 @@
-import { useCallback, useId, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import type { CSSProperties, FormEvent, ReactElement } from "react";
 import {
   Brand,
@@ -7,10 +7,12 @@ import {
   Icon,
   ICON_SIZE,
   Notice,
+  Select,
 } from "../components/index.js";
 import type { NoticeNature } from "../components/index.js";
 import { useLocale } from "../locale.js";
 import { useNavigation } from "../navigation.js";
+import { timeZoneOptionLabel } from "../time-zone.js";
 import { DASHBOARD_ADDRESS } from "./dashboard.js";
 
 /**
@@ -45,6 +47,7 @@ import { DASHBOARD_ADDRESS } from "./dashboard.js";
  */
 
 export const SESSION_ENDPOINT = "/api/session";
+export const SETUP_ENDPOINT = "/api/instance/setup";
 
 /**
  * Where this screen lives, named so the interface can SEND an operator here
@@ -61,6 +64,7 @@ const RETRY_AFTER_HEADER = "retry-after";
 
 const UNAUTHORIZED_STATUS = 401;
 const TOO_MANY_STATUS = 429;
+const MINIMUM_SETUP_PASSWORD_LENGTH = 8;
 
 /**
  * Why an attempt did not open a session.
@@ -96,6 +100,71 @@ export interface SessionClient {
   /** True when the instance confirmed the session is over. */
   close(): Promise<boolean>;
 }
+
+export type SetupStorageDriver = "local" | "r2" | "s3";
+
+export interface SetupStorage {
+  readonly driver: SetupStorageDriver;
+  readonly endpoint?: string;
+  readonly accessKeyId?: string;
+  readonly secretAccessKey?: string;
+  readonly bucket?: string;
+}
+
+export type SetupOutcome =
+  { readonly ok: true } | { readonly ok: false; readonly reason: string };
+
+/** The unauthenticated setup boundary intentionally reveals only completion. */
+export interface SetupClient {
+  state(): Promise<{
+    readonly complete: boolean;
+    readonly locale?: string;
+    readonly locales?: readonly string[];
+    readonly timeZone?: string;
+    readonly timeZones?: readonly string[];
+  }>;
+  complete(input: {
+    password: string;
+    passwordConfirmation: string;
+    storage: SetupStorage;
+    locale: string;
+    timeZone: string;
+  }): Promise<SetupOutcome>;
+}
+
+export const httpSetupClient: SetupClient = {
+  state: async (): Promise<{
+    readonly complete: boolean;
+    readonly locale?: string;
+    readonly locales?: readonly string[];
+    readonly timeZone?: string;
+    readonly timeZones?: readonly string[];
+  }> => {
+    const response = await fetch(SETUP_ENDPOINT);
+    if (!response.ok) throw new Error(String(response.status));
+    return (await response.json()) as {
+      readonly complete: boolean;
+      readonly locale?: string;
+      readonly locales?: readonly string[];
+      readonly timeZone?: string;
+      readonly timeZones?: readonly string[];
+    };
+  },
+  complete: async (input): Promise<SetupOutcome> => {
+    try {
+      const response = await fetch(SETUP_ENDPOINT, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      if (response.ok) return { ok: true };
+      const payload = (await response.json()) as { error?: string };
+      return { ok: false, reason: payload.error ?? "unreachable" };
+    } catch {
+      return { ok: false, reason: "unreachable" };
+    }
+  },
+};
 
 /** Seconds from the header, or undefined when it says nothing usable. */
 export function retryAfterOf(header: string | null): number | undefined {
@@ -167,6 +236,8 @@ export const httpSessionClient: SessionClient = {
 export interface LoginScreenProps {
   /** Injected by tests. The running interface always talks to `/api/session`. */
   readonly client?: SessionClient;
+  /** Injected by tests. The running interface uses the public setup boundary. */
+  readonly setup?: SetupClient;
 }
 
 /** What the screen is showing about the last thing the operator asked for. */
@@ -218,10 +289,19 @@ const BRAND_TEXT: CSSProperties = { fontSize: "var(--text-lg)" };
 
 export function LoginScreen({
   client = httpSessionClient,
+  setup = httpSetupClient,
 }: LoginScreenProps = {}): ReactElement {
-  const { t } = useLocale();
+  const { t, apply } = useLocale();
   const { navigate } = useNavigation();
   const passwordFieldId = useId();
+  const confirmationFieldId = useId();
+  const storageFieldId = useId();
+  const endpointFieldId = useId();
+  const accessKeyFieldId = useId();
+  const secretKeyFieldId = useId();
+  const bucketFieldId = useId();
+  const localeFieldId = useId();
+  const timeZoneFieldId = useId();
 
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -240,6 +320,50 @@ export function LoginScreen({
    * and both call the same `close()` written below.
    */
   const [opened, setOpened] = useState(false);
+  const [setupState, setSetupState] = useState<
+    "loading" | "needed" | "complete"
+  >("loading");
+  const [setupPassword, setSetupPassword] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [storageDriver, setStorageDriver] =
+    useState<SetupStorageDriver>("local");
+  const [endpoint, setEndpoint] = useState("");
+  const [accessKeyId, setAccessKeyId] = useState("");
+  const [secretAccessKey, setSecretAccessKey] = useState("");
+  const [bucket, setBucket] = useState("");
+  const [setupBusy, setSetupBusy] = useState(false);
+  const [setupError, setSetupError] = useState<string>();
+  const [setupLocale, setSetupLocale] = useState("en");
+  const [setupLocales, setSetupLocales] = useState<readonly string[]>([
+    "en",
+    "pt-BR",
+  ]);
+  const [setupTimeZone, setSetupTimeZone] = useState("UTC");
+  const [setupTimeZones, setSetupTimeZones] = useState<readonly string[]>([
+    "UTC",
+  ]);
+
+  useEffect(() => {
+    let live = true;
+    void setup.state().then(
+      ({ complete, locale, locales, timeZone, timeZones }): void => {
+        if (!live) return;
+        if (locale !== undefined) setSetupLocale(locale);
+        if (locales !== undefined) setSetupLocales(locales);
+        if (timeZone !== undefined) setSetupTimeZone(timeZone);
+        if (timeZones !== undefined) setSetupTimeZones(timeZones);
+        setSetupState(complete ? "complete" : "needed");
+      },
+      (): void => {
+        // A failed public read must not turn an already operating instance into
+        // a sign-up form. Its ordinary login remains the safe fallback.
+        if (live) setSetupState("complete");
+      },
+    );
+    return (): void => {
+      live = false;
+    };
+  }, [setup]);
 
   const submit = useCallback(
     async (event: FormEvent<HTMLFormElement>): Promise<void> => {
@@ -288,6 +412,65 @@ export function LoginScreen({
     setOpened(false);
   }, [client]);
 
+  const submitSetup = useCallback(
+    async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+      event.preventDefault();
+      setSetupError(undefined);
+
+      if (setupPassword.length < MINIMUM_SETUP_PASSWORD_LENGTH) {
+        setSetupError("too_short");
+        return;
+      }
+
+      if (setupPassword !== confirmation) {
+        setSetupError("password_confirmation_mismatch");
+        return;
+      }
+
+      setSetupBusy(true);
+      const storage: SetupStorage =
+        storageDriver === "local"
+          ? { driver: "local" }
+          : {
+              driver: storageDriver,
+              endpoint,
+              accessKeyId,
+              secretAccessKey,
+              bucket,
+            };
+      const answer = await setup.complete({
+        password: setupPassword,
+        passwordConfirmation: confirmation,
+        storage,
+        locale: setupLocale,
+        timeZone: setupTimeZone,
+      });
+      setSetupBusy(false);
+      if (!answer.ok) {
+        setSetupError(answer.reason);
+        return;
+      }
+      setSetupPassword("");
+      setConfirmation("");
+      setSecretAccessKey("");
+      await apply(setupLocale);
+      setSetupState("complete");
+    },
+    [
+      accessKeyId,
+      apply,
+      bucket,
+      confirmation,
+      endpoint,
+      secretAccessKey,
+      setup,
+      setupLocale,
+      setupPassword,
+      setupTimeZone,
+      storageDriver,
+    ],
+  );
+
   const announcement =
     outcome === undefined ? undefined : announcementOf(outcome, t);
 
@@ -307,64 +490,230 @@ export function LoginScreen({
         </div>
 
         <div className="mc-panel">
-          {announcement === undefined ? null : (
-            <Notice nature={announcement.nature} title={announcement.title}>
-              {announcement.sentence}
-            </Notice>
-          )}
-
-          {opened ? (
-            <>
-              <Notice nature="success" title={t("screens.login.signedInTitle")}>
-                {t("screens.login.signedIn")}
-              </Notice>
-              <Button
-                variant="secondary"
-                icon="log-out"
-                disabled={busy}
-                onClick={(): void => {
-                  void signOut();
-                }}
-              >
-                {t("screens.login.signOut")}
-              </Button>
-            </>
-          ) : (
+          {setupState === "loading" ? null : setupState === "needed" ? (
             <form
               className="mc-stack"
               onSubmit={(event): void => {
-                void submit(event);
+                void submitSetup(event);
               }}
             >
-              <p className="mc-panel__note">{t("screens.login.intro")}</p>
-
+              <p className="mc-panel__note">{t("screens.setup.intro")}</p>
+              {setupError === undefined ? null : (
+                <Notice nature="error" title={t("screens.setup.errorTitle")}>
+                  {setupError === "too_short"
+                    ? t("screens.setup.passwordTooShort")
+                    : setupError === "password_confirmation_mismatch"
+                      ? t("screens.setup.confirmationMismatch")
+                      : t("screens.setup.error")}
+                </Notice>
+              )}
               <Field
                 id={passwordFieldId}
                 type="password"
-                name="password"
-                label={t("screens.login.passwordLabel")}
-                autoComplete="current-password"
+                name="setup-password"
+                label={t("screens.setup.passwordLabel")}
+                hint={t("screens.setup.passwordHint")}
+                error={
+                  setupError === "too_short"
+                    ? t("screens.setup.passwordTooShort")
+                    : undefined
+                }
+                autoComplete="new-password"
                 required
-                value={password}
+                value={setupPassword}
                 onChange={(event): void => {
-                  setPassword(event.target.value);
+                  setSetupPassword(event.target.value);
+                  if (
+                    setupError === "too_short" ||
+                    setupError === "password_confirmation_mismatch"
+                  ) {
+                    setSetupError(undefined);
+                  }
                 }}
               />
+              <Field
+                id={confirmationFieldId}
+                type="password"
+                name="setup-password-confirmation"
+                label={t("screens.setup.confirmationLabel")}
+                error={
+                  setupError === "password_confirmation_mismatch"
+                    ? t("screens.setup.confirmationMismatch")
+                    : undefined
+                }
+                autoComplete="new-password"
+                required
+                value={confirmation}
+                onChange={(event): void => {
+                  setConfirmation(event.target.value);
+                  if (setupError === "password_confirmation_mismatch") {
+                    setSetupError(undefined);
+                  }
+                }}
+              />
+              <Field id={localeFieldId} label={t("screens.setup.localeLabel")}>
+                <Select
+                  id={localeFieldId}
+                  value={setupLocale}
+                  options={setupLocales.map((value) => ({
+                    value,
+                    label: value === "pt-BR" ? "Português (Brasil)" : "English",
+                  }))}
+                  onChange={(event): void => setSetupLocale(event.target.value)}
+                />
+              </Field>
+              <Field
+                id={timeZoneFieldId}
+                label={t("screens.setup.timeZoneLabel")}
+              >
+                <Select
+                  id={timeZoneFieldId}
+                  value={setupTimeZone}
+                  options={setupTimeZones.map((value) => ({
+                    value,
+                    label: timeZoneOptionLabel(value),
+                  }))}
+                  onChange={(event): void =>
+                    setSetupTimeZone(event.target.value)
+                  }
+                />
+              </Field>
+              <Field
+                id={storageFieldId}
+                label={t("screens.setup.storageLabel")}
+              >
+                <Select
+                  id={storageFieldId}
+                  value={storageDriver}
+                  options={[
+                    { value: "local", label: t("screens.setup.storageLocal") },
+                    { value: "r2", label: t("screens.setup.storageR2") },
+                    { value: "s3", label: t("screens.setup.storageS3") },
+                  ]}
+                  onChange={(event): void =>
+                    setStorageDriver(event.target.value as SetupStorageDriver)
+                  }
+                />
+              </Field>
+              {storageDriver === "local" ? (
+                <Notice nature="info" title={t("screens.setup.localTitle")}>
+                  {t("screens.setup.localNote")}
+                </Notice>
+              ) : (
+                <>
+                  <Field
+                    id={endpointFieldId}
+                    name="storage-endpoint"
+                    label={t("screens.setup.endpointLabel")}
+                    required
+                    value={endpoint}
+                    onChange={(event): void => setEndpoint(event.target.value)}
+                  />
+                  <Field
+                    id={accessKeyFieldId}
+                    name="storage-access-key"
+                    label={t("screens.setup.accessKeyLabel")}
+                    required
+                    value={accessKeyId}
+                    onChange={(event): void =>
+                      setAccessKeyId(event.target.value)
+                    }
+                  />
+                  <Field
+                    id={secretKeyFieldId}
+                    type="password"
+                    name="storage-secret-key"
+                    label={t("screens.setup.secretKeyLabel")}
+                    required
+                    value={secretAccessKey}
+                    onChange={(event): void =>
+                      setSecretAccessKey(event.target.value)
+                    }
+                  />
+                  <Field
+                    id={bucketFieldId}
+                    name="storage-bucket"
+                    label={t("screens.setup.bucketLabel")}
+                    required
+                    value={bucket}
+                    onChange={(event): void => setBucket(event.target.value)}
+                  />
+                </>
+              )}
+              <Notice nature="info" title={t("screens.setup.metaTitle")}>
+                {t("screens.setup.metaNote")}
+              </Notice>
+              <Button type="submit" variant="primary" block pending={setupBusy}>
+                {setupBusy
+                  ? t("screens.setup.submitting")
+                  : t("screens.setup.submit")}
+              </Button>
+            </form>
+          ) : (
+            <>
+              {announcement === undefined ? null : (
+                <Notice nature={announcement.nature} title={announcement.title}>
+                  {announcement.sentence}
+                </Notice>
+              )}
 
-              {/* The word changes while it works, and the button keeps a word:
+              {opened ? (
+                <>
+                  <Notice
+                    nature="success"
+                    title={t("screens.login.signedInTitle")}
+                  >
+                    {t("screens.login.signedIn")}
+                  </Notice>
+                  <Button
+                    variant="secondary"
+                    icon="log-out"
+                    disabled={busy}
+                    onClick={(): void => {
+                      void signOut();
+                    }}
+                  >
+                    {t("screens.login.signOut")}
+                  </Button>
+                </>
+              ) : (
+                <form
+                  className="mc-stack"
+                  onSubmit={(event): void => {
+                    void submit(event);
+                  }}
+                >
+                  <p className="mc-panel__note">{t("screens.login.intro")}</p>
+
+                  <Field
+                    id={passwordFieldId}
+                    type="password"
+                    name="password"
+                    label={t("screens.login.passwordLabel")}
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(event): void => {
+                      setPassword(event.target.value);
+                    }}
+                  />
+
+                  {/* The word changes while it works, and the button keeps a word:
                   a control whose label empties out is one the operator cannot
                   name to anyone. */}
-              <Button type="submit" variant="primary" block pending={busy}>
-                {busy
-                  ? t("screens.login.submitting")
-                  : t("screens.login.submit")}
-              </Button>
+                  <Button type="submit" variant="primary" block pending={busy}>
+                    {busy
+                      ? t("screens.login.submitting")
+                      : t("screens.login.submit")}
+                  </Button>
 
-              <p className="mc-source">
-                <Icon name="lock" size={ICON_SIZE.chip} />
-                {t("screens.login.note")}
-              </p>
-            </form>
+                  <p className="mc-source">
+                    <Icon name="lock" size={ICON_SIZE.chip} />
+                    {t("screens.login.note")}
+                  </p>
+                </form>
+              )}
+            </>
           )}
         </div>
       </div>

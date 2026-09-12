@@ -90,6 +90,32 @@ describe("the webhook", () => {
   });
 
   describe("REQ-001: subscription verification", () => {
+    it("records a successful platform confirmation", async () => {
+      let confirmations = 0;
+      const confirmedApp = buildWebhookServer({
+        verifyToken: VERIFY_TOKEN,
+        appSecret: APP_SECRET,
+        events: createReceivedEventStore(handle.db),
+        audit,
+        now: () => NOW,
+        onConfirmed: async () => {
+          confirmations += 1;
+        },
+      });
+      const response = await confirmedApp.inject({
+        method: "GET",
+        url: "/webhook",
+        query: {
+          "hub.mode": "subscribe",
+          "hub.verify_token": VERIFY_TOKEN,
+          "hub.challenge": "challenge",
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(confirmations).toBe(1);
+      await confirmedApp.close();
+    });
+
     it("echoes the challenge as plain text when the token is right", async () => {
       const response = await app.inject({
         method: "GET",
@@ -132,9 +158,62 @@ describe("the webhook", () => {
 
       expect(response.statusCode).toBe(403);
     });
+
+    it("refuses a handshake until a verification token has been saved", async () => {
+      const unconfigured = buildWebhookServer({
+        verifyToken: "",
+        appSecret: APP_SECRET,
+        events: createReceivedEventStore(handle.db),
+        audit,
+        now: () => NOW,
+      });
+
+      const response = await unconfigured.inject({
+        method: "GET",
+        url: "/webhook",
+        query: {
+          "hub.mode": "subscribe",
+          "hub.verify_token": "",
+          "hub.challenge": "challenge",
+        },
+      });
+
+      expect(response.statusCode).toBe(403);
+      await unconfigured.close();
+    });
   });
 
   describe("REQ-002: signature validation", () => {
+    it("refuses events until the Meta App Secret has been saved", async () => {
+      const unconfigured = buildWebhookServer({
+        verifyToken: VERIFY_TOKEN,
+        appSecret: "",
+        events: createReceivedEventStore(handle.db),
+        audit,
+        now: () => NOW,
+        onEvent: (_payload, eventId) => {
+          handled.push(eventId);
+          return Promise.resolve();
+        },
+      });
+
+      const body = eventBody();
+      const response = await unconfigured.inject({
+        method: "POST",
+        url: "/webhook",
+        headers: {
+          "content-type": "application/json",
+          "x-hub-signature-256": sign(body),
+        },
+        payload: body,
+      });
+
+      expect(response.statusCode).toBe(403);
+      await unconfigured.whenIdle();
+      expect(handled).toEqual([]);
+      await unconfigured.close();
+    });
+
     it("accepts a body whose signature matches", async () => {
       const body = eventBody();
 

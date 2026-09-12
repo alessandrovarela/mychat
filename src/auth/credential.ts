@@ -136,6 +136,15 @@ export type SetPasswordOutcome =
   | { readonly ok: false; readonly reason: "too_short" };
 
 /**
+ * The only reasons a password write can be refused after its shape was
+ * accepted. They are codes for the HTTP boundary, never operator-facing text.
+ */
+export type ReauthenticatedPasswordOutcome =
+  | SetPasswordOutcome
+  | { readonly ok: false; readonly reason: "current_password_required" }
+  | { readonly ok: false; readonly reason: "current_password_invalid" };
+
+/**
  * Sets or replaces the operator's password (REQ-101).
  *
  * A refusal writes nothing, which is what makes "nothing was changed" a fact
@@ -155,6 +164,35 @@ export async function setOperatorPassword(
   await store.write(await hashPassword(password), PASSWORD_ALGORITHM, now);
 
   return { ok: true, replaced: existing !== undefined };
+}
+
+/**
+ * Sets the first password, or replaces an existing one after proving that the
+ * caller knows the current password (REQ-437, REQ-441).
+ *
+ * Keeping this rule beside the credential rather than in a route is what
+ * prevents a second configuration entry point from accidentally turning a
+ * password replacement into an unauthenticated reset. A missing credential is
+ * the one exceptional case: first setup has no current password to present.
+ */
+export async function setOperatorPasswordReauthenticated(
+  password: string,
+  currentPassword: string | undefined,
+  store: OperatorCredentialStore,
+  now: Date,
+): Promise<ReauthenticatedPasswordOutcome> {
+  const existing = await store.read();
+
+  if (existing !== undefined) {
+    if (currentPassword === undefined) {
+      return { ok: false, reason: "current_password_required" };
+    }
+    if (!(await verifyOperatorPassword(currentPassword, store))) {
+      return { ok: false, reason: "current_password_invalid" };
+    }
+  }
+
+  return setOperatorPassword(password, store, now);
 }
 
 /**

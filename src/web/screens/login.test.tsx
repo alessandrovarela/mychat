@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import en from "../../i18n/locales/en.json";
+import pt from "../../i18n/locales/pt-BR.json";
 import { LocaleProvider } from "../locale.js";
 import type { LocaleClient, LocaleState } from "../locale.js";
 import { NavigationProvider, useNavigation } from "../navigation.js";
@@ -15,7 +16,13 @@ import {
   retryAfterOf,
   SESSION_ENDPOINT,
 } from "./login.js";
-import type { SessionClient, SessionOutcome } from "./login.js";
+import type {
+  SessionClient,
+  SessionOutcome,
+  SetupClient,
+  SetupOutcome,
+  SetupStorage,
+} from "./login.js";
 
 /**
  * The access screen, in the emulated DOM the gate can afford (ADR-017,
@@ -44,6 +51,7 @@ const EN = "en";
 const PASSWORD = "a-long-enough-password";
 
 const copy = en.screens.login;
+const setupCopy = en.screens.setup;
 
 /** Resolves a catalogue entry the way the translator does, for a query. */
 function text(
@@ -93,6 +101,32 @@ function createSessionDouble(): SessionDouble {
     },
   };
 
+  return double;
+}
+
+interface SetupDouble extends SetupClient {
+  readonly requests: Array<{
+    password: string;
+    passwordConfirmation: string;
+    storage: SetupStorage;
+  }>;
+  completeState: boolean;
+  answer: SetupOutcome;
+}
+
+function createSetupDouble(complete = true): SetupDouble {
+  const double: SetupDouble = {
+    requests: [],
+    completeState: complete,
+    answer: { ok: true },
+    state: (): Promise<{ readonly complete: boolean }> =>
+      Promise.resolve({ complete: double.completeState }),
+    complete: (input): Promise<SetupOutcome> => {
+      double.requests.push(input);
+      if (double.answer.ok) double.completeState = true;
+      return Promise.resolve(double.answer);
+    },
+  };
   return double;
 }
 
@@ -180,6 +214,158 @@ describe("REQ-031: the screen that opens a session", () => {
     // The absence of sign-up and of password recovery is stated, so it reads as
     // a decision rather than as a screen someone forgot to finish.
     expect(screen.getByText(copy.note)).toBeInTheDocument();
+  });
+});
+
+describe("REQ-441: first installation is configured before ordinary login", () => {
+  it("keeps the ordinary login form for an already configured instance", async () => {
+    const setup = createSetupDouble(true);
+
+    render(
+      <LocaleProvider client={localeClient(EN)}>
+        <LoginScreen client={createSessionDouble()} setup={setup} />
+      </LocaleProvider>,
+    );
+
+    expect(
+      await screen.findByLabelText(copy.passwordLabel),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(setupCopy.intro)).toBeNull();
+  });
+
+  it("collects a confirmed password and tested external storage, then returns to login", async () => {
+    const user = userEvent.setup();
+    const setup = createSetupDouble(false);
+    const session = createSessionDouble();
+
+    render(
+      <LocaleProvider client={localeClient(EN)}>
+        <LoginScreen client={session} setup={setup} />
+      </LocaleProvider>,
+    );
+
+    await screen.findByText(setupCopy.intro);
+    expect(screen.getByText(setupCopy.metaNote)).toBeInTheDocument();
+    expect(screen.getByText(setupCopy.localNote)).toBeInTheDocument();
+    await user.selectOptions(
+      screen.getByLabelText(setupCopy.storageLabel),
+      "r2",
+    );
+    await user.type(screen.getByLabelText(setupCopy.passwordLabel), PASSWORD);
+    await user.type(
+      screen.getByLabelText(setupCopy.confirmationLabel),
+      PASSWORD,
+    );
+    await user.type(
+      screen.getByLabelText(setupCopy.endpointLabel),
+      "https://r2.example.test",
+    );
+    await user.type(
+      screen.getByLabelText(setupCopy.accessKeyLabel),
+      "access-key",
+    );
+    await user.type(
+      screen.getByLabelText(setupCopy.secretKeyLabel),
+      "secret-key",
+    );
+    await user.type(screen.getByLabelText(setupCopy.bucketLabel), "assets");
+    await user.click(screen.getByRole("button", { name: setupCopy.submit }));
+
+    await waitFor(() => {
+      expect(setup.requests).toEqual([
+        {
+          password: PASSWORD,
+          passwordConfirmation: PASSWORD,
+          locale: "en",
+          timeZone: "UTC",
+          storage: {
+            driver: "r2",
+            endpoint: "https://r2.example.test",
+            accessKeyId: "access-key",
+            secretAccessKey: "secret-key",
+            bucket: "assets",
+          },
+        },
+      ]);
+    });
+    expect(
+      await screen.findByLabelText(copy.passwordLabel),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(setupCopy.intro)).toBeNull();
+  });
+
+  it("shows ordinary login immediately in the language chosen during setup", async () => {
+    const user = userEvent.setup();
+    const setup = createSetupDouble(false);
+
+    render(
+      <LocaleProvider client={localeClient(EN)}>
+        <LoginScreen client={createSessionDouble()} setup={setup} />
+      </LocaleProvider>,
+    );
+
+    await screen.findByText(setupCopy.intro);
+    await user.selectOptions(screen.getByLabelText(setupCopy.localeLabel), PT);
+    await user.type(screen.getByLabelText(setupCopy.passwordLabel), PASSWORD);
+    await user.type(
+      screen.getByLabelText(setupCopy.confirmationLabel),
+      PASSWORD,
+    );
+    await user.click(screen.getByRole("button", { name: setupCopy.submit }));
+
+    expect(
+      await screen.findByLabelText(pt.screens.login.passwordLabel),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(copy.passwordLabel)).toBeNull();
+  });
+
+  it("names and marks a password that is too short before sending setup", async () => {
+    const user = userEvent.setup();
+    const setup = createSetupDouble(false);
+
+    render(
+      <LocaleProvider client={localeClient(EN)}>
+        <LoginScreen client={createSessionDouble()} setup={setup} />
+      </LocaleProvider>,
+    );
+
+    await screen.findByText(setupCopy.intro);
+    const password = screen.getByLabelText(setupCopy.passwordLabel);
+    await user.type(password, "123456");
+    await user.type(
+      screen.getByLabelText(setupCopy.confirmationLabel),
+      "123456",
+    );
+    await user.click(screen.getByRole("button", { name: setupCopy.submit }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      setupCopy.passwordTooShort,
+    );
+    expect(password).toHaveAttribute("aria-invalid", "true");
+    expect(setup.requests).toEqual([]);
+  });
+
+  it("names and marks the confirmation when the passwords do not match", async () => {
+    const user = userEvent.setup();
+    const setup = createSetupDouble(false);
+
+    render(
+      <LocaleProvider client={localeClient(EN)}>
+        <LoginScreen client={createSessionDouble()} setup={setup} />
+      </LocaleProvider>,
+    );
+
+    await screen.findByText(setupCopy.intro);
+    await user.type(screen.getByLabelText(setupCopy.passwordLabel), PASSWORD);
+    const confirmation = screen.getByLabelText(setupCopy.confirmationLabel);
+    await user.type(confirmation, "a-different-password");
+    await user.click(screen.getByRole("button", { name: setupCopy.submit }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      setupCopy.confirmationMismatch,
+    );
+    expect(confirmation).toHaveAttribute("aria-invalid", "true");
+    expect(setup.requests).toEqual([]);
   });
 });
 

@@ -29,8 +29,8 @@ function expectConfigError(env: NodeJS.ProcessEnv): ConfigError {
 }
 
 /**
- * Proves AC 16: a missing credential stops the process, the message lists
- * exactly what is absent, and no secret value is ever printed.
+ * Product credentials are optional bootstrap imports. Their absence must never
+ * stop a first installation from reaching the wizard.
  */
 describe("environment configuration", () => {
   it("accepts a complete environment and applies the defaults", () => {
@@ -58,16 +58,12 @@ describe("environment configuration", () => {
     });
   });
 
-  it("accepts an environment with no platform credential at all", () => {
-    // A fresh installation is exactly this case (Phase 1c): the process must
-    // start so the operator can be told what is still missing, instead of
-    // being refused by the very thing that would explain the refusal.
-    const config = loadEnvConfig({
-      META_APP_SECRET: credentials.META_APP_SECRET,
-      WEBHOOK_VERIFY_TOKEN: credentials.WEBHOOK_VERIFY_TOKEN,
-    });
+  it("starts a new installation with no environment file at all", () => {
+    const config = loadEnvConfig({});
 
+    expect(config.metaAppSecret).toBe("");
     expect(config.metaAccessToken).toBeUndefined();
+    expect(config.webhookVerifyToken).toBe("");
     expect(config.instagramAccountId).toBeUndefined();
   });
 
@@ -121,34 +117,14 @@ describe("environment configuration", () => {
     });
   });
 
-  it("lists every missing required variable at once (AC 16)", () => {
-    // The platform token is not in this list, and that is the Phase 1c
-    // decision: it is what a fresh installation is still missing, not what
-    // makes the process unable to serve.
-    const error = expectConfigError({});
-
-    expect(error.variables).toEqual([
-      "META_APP_SECRET",
-      "WEBHOOK_VERIFY_TOKEN",
-    ]);
-    expect(error.message).toContain("META_APP_SECRET");
-    expect(error.message).toContain("WEBHOOK_VERIFY_TOKEN");
-  });
-
-  it("never prints a secret value in the failure message (AC 16)", () => {
-    const error = expectConfigError({
-      META_APP_SECRET: SECRET,
-      META_ACCESS_TOKEN: `token-${SECRET}`,
+  it("does not treat blank legacy credentials as configuration", () => {
+    const config = loadEnvConfig({
+      META_APP_SECRET: "  ",
+      WEBHOOK_VERIFY_TOKEN: "  ",
     });
 
-    expect(error.variables).toEqual(["WEBHOOK_VERIFY_TOKEN"]);
-    expect(error.message).not.toContain(SECRET);
-  });
-
-  it("counts a blank credential as missing, not as an empty value (AC 16)", () => {
-    const error = expectConfigError({ ...credentials, META_APP_SECRET: "  " });
-
-    expect(error.variables).toEqual(["META_APP_SECRET"]);
+    expect(config.metaAppSecret).toBe("");
+    expect(config.webhookVerifyToken).toBe("");
   });
 
   it("does not require the S3 variables while the driver is disk", () => {
@@ -220,9 +196,9 @@ describe("environment configuration", () => {
     process.env.META_APP_SECRET = SECRET;
 
     try {
-      const error = expectConfigError({});
+      const config = loadEnvConfig({});
 
-      expect(error.variables).toContain("META_APP_SECRET");
+      expect(config.metaAppSecret).toBe("");
     } finally {
       if (previous === undefined) {
         delete process.env.META_APP_SECRET;

@@ -482,26 +482,26 @@ export interface DiskAssetConfig {
    * exposes the process, which is exactly what makes the `[human]` proof of
    * this phase possible without a bucket.
    */
-  readonly publicBaseUrl: string;
+  readonly publicBaseUrl: string | (() => Promise<string>);
   /** Present in the composed application; absent only for legacy local doubles. */
   readonly assetCapabilitySecret?: AssetCapabilitySecret;
 }
 
 /** The development binding: files on disk, served under a public prefix. */
 export function createDiskAssets(config: DiskAssetConfig): AssetCatalogue {
-  const base = config.publicBaseUrl.replace(/\/+$/, "");
-
   return {
-    publicUrl(name: string): Promise<string> {
+    async publicUrl(name: string): Promise<string> {
       const file = assetPath(config.dir, name);
       if (file === undefined || !existsSync(file)) {
         throw new Error(`asset "${name}" does not exist`);
       }
-      return Promise.resolve(
-        config.assetCapabilitySecret === undefined
-          ? `${base}/${encodeURIComponent(name)}`
-          : assetCapabilityUrl(base, name, config.assetCapabilitySecret),
-      );
+      const source = config.publicBaseUrl;
+      const base = (
+        typeof source === "function" ? await source() : source
+      ).replace(/\/+$/, "");
+      return config.assetCapabilitySecret === undefined
+        ? `${base}/${encodeURIComponent(name)}`
+        : assetCapabilityUrl(base, name, config.assetCapabilitySecret);
     },
     exists(name: string): Promise<boolean> {
       const file = assetPath(config.dir, name);

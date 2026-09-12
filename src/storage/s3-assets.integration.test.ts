@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   ASSET_PREFIX,
+  checkS3Connection,
   S3AssetError,
   createS3Assets,
   presignedS3GetUrl,
+  validateS3AssetConfiguration,
 } from "./s3-assets.js";
 import type { AssetBody } from "./assets.js";
 
@@ -150,6 +152,50 @@ function startEmulator(): Emulator {
 }
 
 describe("REQ-047: S3-compatible asset binding", () => {
+  it("validates form data and tests read access without writing an object", async () => {
+    const emulator = startEmulator();
+    const config = {
+      endpoint: emulator.endpoint,
+      accessKeyId: "test-key",
+      secretAccessKey: "test-secret",
+      bucket: "mychat",
+    };
+
+    expect(validateS3AssetConfiguration(config)).toEqual({ ok: true });
+    expect(
+      validateS3AssetConfiguration({ ...config, endpoint: "not an endpoint" }),
+    ).toEqual({ ok: false, reason: "invalid_endpoint" });
+    expect(
+      validateS3AssetConfiguration({ ...config, secretAccessKey: " " }),
+    ).toEqual({ ok: false, reason: "missing_field" });
+
+    await expect(
+      checkS3Connection({
+        ...config,
+        publicBaseUrl: "https://cdn.example.test",
+        fetch: emulator.fetch,
+      }),
+    ).resolves.toEqual({ status: "healthy" });
+    expect(emulator.requests.map((request) => request.method)).toEqual(["GET"]);
+    expect(emulator.objects).toEqual(new Map());
+  });
+
+  it("reports only a stable diagnostic when the provider rejects credentials", async () => {
+    const emulator = startEmulator();
+    emulator.failList = true;
+
+    await expect(
+      checkS3Connection({
+        endpoint: emulator.endpoint,
+        accessKeyId: "test-key",
+        secretAccessKey: "test-secret",
+        bucket: "mychat",
+        publicBaseUrl: "https://cdn.example.test",
+        fetch: emulator.fetch,
+      }),
+    ).resolves.toEqual({ status: "failure", reason: "protocol" });
+  });
+
   it("creates a five-minute read capability for one object without exposing credentials", () => {
     const url = new URL(
       presignedS3GetUrl(
@@ -202,6 +248,29 @@ describe("REQ-047: S3-compatible asset binding", () => {
     );
     expect(signed?.headers.get("authorization")).toContain("AWS4-HMAC-SHA256");
     expect(signed?.headers.get("x-amz-content-sha256")).toBeDefined();
+  });
+
+  it("reads the public base again when a persisted origin changes", async () => {
+    const emulator = startEmulator();
+    let publicBaseUrl = "https://first.example/assets";
+    const assets = createS3Assets({
+      endpoint: emulator.endpoint,
+      accessKeyId: "test-key",
+      secretAccessKey: "test-secret",
+      bucket: "mychat",
+      publicBaseUrl: () => Promise.resolve(publicBaseUrl),
+      assetCapabilitySecret: "capability-secret",
+      fetch: emulator.fetch,
+    });
+    await assets.put("guide.pdf", PDF);
+
+    expect(new URL(await assets.publicUrl("guide.pdf")).origin).toBe(
+      "https://first.example",
+    );
+    publicBaseUrl = "https://panel.example/assets";
+    expect(new URL(await assets.publicUrl("guide.pdf")).origin).toBe(
+      "https://panel.example",
+    );
   });
 
   it("refuses a collision without replacing the original object", async () => {

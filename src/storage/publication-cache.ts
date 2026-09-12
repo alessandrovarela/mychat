@@ -153,7 +153,7 @@ export interface DiskThumbnailConfig {
    * (ADR-010). With the disk binding this is the process's own public origin,
    * because the process is what answers for those addresses.
    */
-  readonly publicBaseUrl: string;
+  readonly publicBaseUrl: string | (() => Promise<string>);
 }
 
 /**
@@ -192,8 +192,6 @@ function thumbnailFile(dir: string, key: string): string | undefined {
 export function createDiskThumbnails(
   config: DiskThumbnailConfig,
 ): ThumbnailStore {
-  const base = config.publicBaseUrl.replace(/\/+$/, "");
-
   return {
     put(key: string, body: ThumbnailBody): Promise<void> {
       const file = thumbnailFile(config.dir, key);
@@ -220,7 +218,7 @@ export function createDiskThumbnails(
       return Promise.resolve(file !== undefined && existsSync(file));
     },
 
-    publicUrl(name: string): Promise<string> {
+    async publicUrl(name: string): Promise<string> {
       const file = thumbnailFile(config.dir, name);
 
       if (file === undefined || !existsSync(file)) {
@@ -232,9 +230,11 @@ export function createDiskThumbnails(
       // The prefix is part of the address because it is part of the key, and
       // the route answers at exactly that prefix. The file name is encoded for
       // the same reason `createDiskAssets` encodes one: it lands in a URL.
-      return Promise.resolve(
-        `${base}/${THUMBNAIL_PREFIX}${encodeURIComponent(name.slice(THUMBNAIL_PREFIX.length))}`,
-      );
+      const source = config.publicBaseUrl;
+      const base = (
+        typeof source === "function" ? await source() : source
+      ).replace(/\/+$/, "");
+      return `${base}/${THUMBNAIL_PREFIX}${encodeURIComponent(name.slice(THUMBNAIL_PREFIX.length))}`;
     },
   };
 }

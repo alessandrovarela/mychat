@@ -61,6 +61,7 @@ export {
   registerAssetRoutes,
   registerApiRoutes,
   registerLocaleRoutes,
+  registerSetupRoutes,
 } from "./api/index.js";
 
 export type { ApiDeps, DashboardMetricsReader } from "./api/index.js";

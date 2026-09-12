@@ -34,8 +34,13 @@ declare module "fastify" {
 export type EventHandler = (payload: unknown, eventId: string) => Promise<void>;
 
 export interface WebhookDeps {
-  readonly verifyToken: string;
-  readonly appSecret: string;
+  readonly verifyToken: string | (() => Promise<string>);
+  /**
+   * May be read on each request because the operator can configure the App
+   * Secret after the process starts. An empty value means the integration is
+   * not ready and must never authenticate an event with an empty secret.
+   */
+  readonly appSecret: string | (() => Promise<string>);
   readonly events: ReceivedEventStore;
   readonly audit: AuditRepository;
   readonly now: () => Date;
@@ -44,6 +49,7 @@ export interface WebhookDeps {
    * needs to acknowledge (a smoke test, the first boot) still works.
    */
   readonly onEvent?: EventHandler;
+  readonly onConfirmed?: () => Promise<void>;
 }
 
 /**
@@ -143,11 +149,18 @@ export function buildWebhookServer(deps: WebhookDeps): WebhookServer {
       const token = query["hub.verify_token"];
       const challenge = query["hub.challenge"];
 
+      const expectedToken =
+        typeof deps.verifyToken === "string"
+          ? deps.verifyToken
+          : await deps.verifyToken();
+
       if (
         mode === "subscribe" &&
-        token === deps.verifyToken &&
+        expectedToken !== "" &&
+        token === expectedToken &&
         challenge !== undefined
       ) {
+        await deps.onConfirmed?.();
         return reply.code(200).type("text/plain").send(challenge);
       }
 
@@ -163,11 +176,27 @@ export function buildWebhookServer(deps: WebhookDeps): WebhookServer {
       // bug (REQ-002).
       const raw = request.rawBody ?? Buffer.alloc(0);
       const header = request.headers["x-hub-signature-256"];
+      const appSecret =
+        typeof deps.appSecret === "string"
+          ? deps.appSecret
+          : await deps.appSecret();
+
+      if (appSecret === "") {
+        await deps.audit.record(
+          {
+            kind: "event_received",
+            outcome: "failed",
+            reason: "Meta App Secret is not configured",
+          },
+          deps.now(),
+        );
+        return reply.code(403).send();
+      }
 
       const verdict = verifySignature(
         raw,
         typeof header === "string" ? header : undefined,
-        deps.appSecret,
+        appSecret,
       );
 
       if (!verdict.valid) {
@@ -225,6 +254,7 @@ export function buildWebhookServer(deps: WebhookDeps): WebhookServer {
         },
         deps.now(),
       );
+      await deps.onConfirmed?.();
 
       // REQ-003: the response goes out BEFORE any processing. The platform
       // redelivers whatever it does not get acknowledged quickly, and

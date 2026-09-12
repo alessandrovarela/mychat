@@ -18,8 +18,7 @@ describe("REQ-076: bilingual public installation and first-use guides", () => {
         "docker compose up -d",
         "mychat-data",
         ".env",
-        "META_APP_SECRET",
-        "WEBHOOK_VERIFY_TOKEN",
+        "webhook",
         "Meta",
       ]) {
         expect(guide).toContain(expected);

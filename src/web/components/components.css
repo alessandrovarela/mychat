@@ -1141,7 +1141,7 @@
  */
 .mc-toasts {
   position: fixed;
-  inset-block-end: var(--space-4);
+  inset-block-start: var(--space-4);
   inset-inline: var(--space-4);
   max-width: 26rem;
   margin-inline-start: auto;
@@ -1184,11 +1184,46 @@
 @keyframes mc-toast-in {
   from {
     opacity: 0;
-    transform: translateY(var(--space-4));
+    transform: translateY(calc(var(--space-4) * -1));
   }
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* A machine-readable value that the operator needs to carry to another
+ * dashboard. It remains selectable, uses the code face, and pairs the copy
+ * action with precisely the value it copies. */
+.mc-copy-value {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  max-inline-size: 100%;
+}
+.mc-copy-value code {
+  display: flex;
+  align-items: center;
+  min-inline-size: 0;
+  flex: 1 1 auto;
+  padding: var(--space-3);
+  overflow-x: auto;
+  border: 1px solid var(--border-field);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--fg-1);
+  font-family: var(--font-code);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+.mc-copy-value > .mc-input {
+  min-inline-size: 0;
+  flex: 1 1 auto;
+}
+@media (max-width: 32rem) {
+  .mc-copy-value {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 
@@ -2409,6 +2444,44 @@
   font-size: var(--text-sm);
   color: var(--fg-2);
   line-height: var(--leading-normal);
+}
+.mc-settings-integrations {
+  inline-size: 100%;
+}
+.mc-settings-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--bg-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+}
+.mc-settings-subsection__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.mc-settings-subsection__head h3 {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+  color: var(--fg-1);
+}
+.mc-settings-action-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--bg-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+}
+.mc-settings-action-group h4 {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--fg-1);
 }
 .mc-stack {
   display: flex;
