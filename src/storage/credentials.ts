@@ -119,9 +119,6 @@ function toStored(
   row: PlatformCredentialRow,
   cipher: SecretCipher | undefined,
 ): StoredCredential {
-  // Credentials written before local encryption was introduced are retained
-  // for one read so an upgrade does not lock an operator out of their Meta
-  // integration. The next replacement or refresh writes the encrypted form.
   const accessToken =
     cipher === undefined || !row.accessToken.startsWith(`${CIPHER_VERSION}.`)
       ? row.accessToken
@@ -147,9 +144,25 @@ export function createCredentialStore(
   return {
     read(): Promise<StoredCredential | undefined> {
       const [row] = db.select().from(platformCredentials).where(where).all();
-      return Promise.resolve().then(() =>
-        row === undefined ? undefined : toStored(row, cipher),
-      );
+      return Promise.resolve().then(() => {
+        if (row === undefined) {
+          return undefined;
+        }
+
+        if (
+          cipher !== undefined &&
+          !row.accessToken.startsWith(`${CIPHER_VERSION}.`)
+        ) {
+          const accessToken = cipher.encrypt(row.accessToken);
+          db.update(platformCredentials)
+            .set({ accessToken })
+            .where(where)
+            .run();
+          return toStored({ ...row, accessToken }, cipher);
+        }
+
+        return toStored(row, cipher);
+      });
     },
 
     write(credential: StoredCredential, now: Date): Promise<void> {

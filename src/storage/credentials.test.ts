@@ -24,6 +24,40 @@ afterEach(() => {
 });
 
 describe("REQ-437: persisted credentials are encrypted with the local key", () => {
+  it("upgrades a legacy plaintext credential on its first encrypted read", async () => {
+    const legacy = createCredentialStore(handle.db);
+    await legacy.write(
+      {
+        authPath: "instagram_login",
+        accessToken: TOKEN,
+        accountId: "account-1",
+        expiresAt: new Date("2026-11-04T12:00:00.000Z"),
+        lastCheckedAt: new Date("2026-09-04T12:00:00.000Z"),
+        lastRefreshedAt: new Date("2026-09-03T12:00:00.000Z"),
+      },
+      NOW,
+    );
+
+    const encrypted = createCredentialStore(handle.db, createSecretCipher(KEY));
+    await expect(encrypted.read()).resolves.toMatchObject({
+      accessToken: TOKEN,
+      accountId: "account-1",
+    });
+
+    const [row] = handle.db
+      .select()
+      .from(platformCredentials)
+      .where(eq(platformCredentials.id, PLATFORM_CREDENTIAL_ID))
+      .all();
+    expect(row?.accessToken).toMatch(/^v1\./);
+    expect(row?.accessToken).not.toContain(TOKEN);
+    expect(row?.updatedAt).toEqual(NOW);
+    await expect(encrypted.read()).resolves.toMatchObject({
+      accessToken: TOKEN,
+      accountId: "account-1",
+    });
+  });
+
   it("round-trips a credential after a restart without an environment secret", async () => {
     const first = createCredentialStore(handle.db, createSecretCipher(KEY));
     await first.write(
