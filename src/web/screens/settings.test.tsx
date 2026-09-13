@@ -2701,6 +2701,14 @@ describe("Settings operates masked integrations in the authenticated panel", () 
     expect(screen.getByLabelText(copy.metaAccountIdLabel)).toBeDisabled();
     expect(screen.getByLabelText(copy.metaAccessTokenLabel)).toBeDisabled();
     expect(screen.getByLabelText(copy.storageDriverLabel)).toBeDisabled();
+    expect(screen.getByLabelText(copy.storageAccessKeyLabel)).toHaveValue(
+      "••••••••••••",
+    );
+    expect(screen.getByLabelText(copy.storageAccessKeyLabel)).toBeDisabled();
+    expect(screen.getByLabelText(copy.storageSecretKeyLabel)).toHaveValue(
+      "••••••••••••",
+    );
+    expect(screen.getByLabelText(copy.storageSecretKeyLabel)).toBeDisabled();
     expect(screen.getByLabelText(copy.publicOriginLabel)).toBeDisabled();
     expect(screen.getByLabelText(copy.webhookTokenLabel)).toBeDisabled();
     expect(

@@ -1058,6 +1058,14 @@ export function SettingsScreen({
               : "local",
           );
           setStorageEndpoint(value.storage.endpoint ?? "");
+          const externalStorageConfigured =
+            value.storage.configured && value.storage.driver !== "local";
+          setStorageAccessKeyId(
+            externalStorageConfigured ? MASKED_SECRET_VALUE : "",
+          );
+          setStorageSecretAccessKey(
+            externalStorageConfigured ? MASKED_SECRET_VALUE : "",
+          );
           setStorageBucket(value.storage.bucket ?? "");
         }
       } catch {
